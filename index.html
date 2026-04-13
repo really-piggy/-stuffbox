@@ -272,11 +272,26 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
   const updateAttr = (i, k, v) => setAttrs(a => a.map((x,j) => j===i ? {...x,[k]:v} : x));
   const removeAttr = (i) => setAttrs(a => a.filter((_,j) => j!==i));
 
-  // Load attr templates for selected category
+  // Load attr templates for selected category (including parent scene as shared templates)
   const catAttrTpls = useMemo(() => {
     if (!form.categoryId) return [];
-    return loadAttrTemplates()[form.categoryId] || [];
-  }, [form.categoryId]);
+    const allTpls = loadAttrTemplates();
+    // Find the selected category
+    const selectedCat = categories.find(c => c.id === form.categoryId);
+    // Get own category templates
+    const ownTpls = allTpls[form.categoryId] || [];
+    // If it's a sub-category, also include parent scene templates (shared)
+    const parentTpls = (selectedCat && selectedCat.parentId)
+      ? (allTpls[selectedCat.parentId] || []).map(t => ({ ...t, _fromScene: true }))
+      : [];
+    // Merge: scene templates first, then own, deduplicate by key (own wins)
+    const ownKeys = new Set(ownTpls.map(t => t.key.trim()));
+    const merged = [
+      ...parentTpls.filter(t => !ownKeys.has(t.key.trim())),
+      ...ownTpls,
+    ];
+    return merged;
+  }, [form.categoryId, categories]);
 
   const applyAttrTemplates = () => {
     const catId = form.categoryId;
