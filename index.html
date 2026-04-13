@@ -288,6 +288,30 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
 
   const handleSave = () => {
     if (!form.name.trim()) return alert('请输入物品名称');
+    // 同步新品牌
+    const brandName = form.brand?.trim();
+    if (brandName) {
+      const existingBrands = loadBrands();
+      if (!existingBrands.some(b => b.name === brandName)) {
+        saveBrands([...existingBrands, { id: genId(), name: brandName, note:'', sceneId:'', sortOrder: existingBrands.length }]);
+      }
+    }
+    // 同步新属性到模板
+    const catId = form.categoryId;
+    if (catId && attrs.length > 0) {
+      const tpls = loadAttrTemplates();
+      const catTpls = tpls[catId] ? [...tpls[catId]] : [];
+      attrs.forEach(attr => {
+        if (!attr.key.trim()) return;
+        const existing = catTpls.find(t => t.key === attr.key.trim());
+        if (!existing) {
+          catTpls.push({ id: genId(), key: attr.key.trim(), options: attr.value.trim() ? [attr.value.trim()] : [], sortOrder: catTpls.length });
+        } else if (attr.value.trim() && !existing.options.includes(attr.value.trim())) {
+          existing.options.push(attr.value.trim());
+        }
+      });
+      saveAttrTemplates({ ...tpls, [catId]: catTpls });
+    }
     onSave({ ...form, name: form.name.trim(), quantity: Math.max(1, Number(form.quantity)||1) }, attrs, accessories);
   };
 
@@ -310,7 +334,12 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
 
       <div style={fieldWrap}>
         <div style={S.label}>品牌</div>
-        <input style={inputStyle} value={form.brand||''} onChange={e => set('brand', e.target.value)} placeholder="可选" />
+        <input style={inputStyle} value={form.brand||''} onChange={e => set('brand', e.target.value)} placeholder="可选" list="brand-datalist" />
+        <datalist id="brand-datalist">
+          {loadBrands().filter(b => !form.brand || b.name.toLowerCase().includes((form.brand||'').toLowerCase())).map(b => (
+            <option key={b.id} value={b.name} />
+          ))}
+        </datalist>
       </div>
 
       <div style={fieldWrap}>
@@ -383,13 +412,30 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
             <button style={S.btnSm()} onClick={addAttr}>+ 添加</button>
           </div>
         </div>
-        {attrs.map((a, i) => (
-          <div key={a.id} style={{ display:'flex', gap:'8px', marginBottom:'8px' }}>
-            <input style={{ ...inputStyle, flex:1 }} placeholder="属性名" value={a.key} onChange={e => updateAttr(i,'key',e.target.value)} />
-            <input style={{ ...inputStyle, flex:1 }} placeholder="属性值" value={a.value} onChange={e => updateAttr(i,'value',e.target.value)} />
-            <button onClick={() => removeAttr(i)} style={{ color:'#FF3B30', fontSize:'20px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+        {attrs.map((a, i) => {
+          const catTpls = loadAttrTemplates()[form.categoryId] || [];
+          const tplForKey = catTpls.find(t => t.key === a.key);
+          const opts = tplForKey?.options || [];
+          return (
+          <div key={a.id} style={{ marginBottom:'8px' }}>
+            <div style={{ display:'flex', gap:'8px' }}>
+              <input style={{ ...inputStyle, flex:1 }} placeholder="属性名" value={a.key} onChange={e => updateAttr(i,'key',e.target.value)} />
+              <input style={{ ...inputStyle, flex:1 }} placeholder="属性值" value={a.value} onChange={e => updateAttr(i,'value',e.target.value)} />
+              <button onClick={() => removeAttr(i)} style={{ color:'#FF3B30', fontSize:'20px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+            </div>
+            {opts.length > 0 && (
+              <div style={{ display:'flex', gap:'4px', flexWrap:'wrap', marginTop:'4px' }}>
+                {opts.map(opt => (
+                  <button key={opt} type="button" onClick={() => updateAttr(i, 'value', opt)}
+                    style={{ padding:'3px 8px', borderRadius:'12px', border:'1px solid #007AFF', background: a.value===opt ? '#007AFF':'#fff', color: a.value===opt ? '#fff':'#007AFF', fontSize:'12px', cursor:'pointer' }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* 附加物 */}
@@ -583,7 +629,7 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
       </Section>
 
       <Section title="使用统计">
-        <InfoRow label="使用次数" value={`${item.timesUsed||0} 次`} />
+        <InfoRow label="使用次数" value={`${(item.timesUsed||0) + attachmentItems.reduce((s,a)=>s+(a.timesUsed||0),0)} 次${attachmentItems.length > 0 ? ` (主${item.timesUsed||0}+附${attachmentItems.reduce((s,a)=>s+(a.timesUsed||0),0)})` : ''}`} />
         <InfoRow label="首次使用" value={fmt(item.firstUsedAt)} />
         <InfoRow label="最近使用" value={fmt(item.lastUsedAt)} />
         <InfoRow label="使用天数" value={daysUsed ? `${daysUsed} 天` : '—'} last />
@@ -606,7 +652,8 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
                 <div style={{ fontSize:'15px' }}>{att.name}</div>
                 {att.brand && <div style={{ fontSize:'13px', color:'#8E8E93' }}>{att.brand}</div>}
               </div>
-              {att.purchasePrice && <span style={{ marginLeft:'auto', fontSize:'14px', color:'#6C6C70', fontWeight:'600' }}>{fmtPrice(att.purchasePrice)}</span>}
+              {att.purchasePrice && <span style={{ fontSize:'14px', color:'#6C6C70', fontWeight:'600' }}>{fmtPrice(att.purchasePrice)}</span>}
+              <button onClick={() => onRecordUse(att)} style={{ padding:'4px 8px', borderRadius:'8px', background:'#007AFF', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer', flexShrink:0 }}>✓记录</button>
             </div>
           ))}
           {accTotal > 0 && (
@@ -647,14 +694,30 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
 }
 
 // ─── Item Row Component ───────────────────────────────────────────────────────
-function ItemRow({ item, categories, allItems, onTap, onRecordUse, onUpdateQty, isLast }) {
+function ItemRow({ item, categories, allItems, onTap, onRecordUse, onUpdateQty, isLast, sortBy }) {
   const cat = categories.find(c => c.id === item.categoryId);
   const expStatus = expiryStatus(item.expirationDate);
   // 计算含附件的总价
   const mainPrice = Number(item.purchasePrice)||0;
   const accTotal = (allItems||[]).filter(i => i.parentItemId === item.id).reduce((s,a) => s+(Number(a.purchasePrice)||0), 0);
   const displayPrice = mainPrice + accTotal;
+  // 计算排序相关字段
+  const cpwVal = (item.timesUsed||0) > 0 ? (mainPrice / item.timesUsed).toFixed(2) : null;
+  const refDate = item.purchaseDate || item.createdAt || today();
+  const daysElapsed = Math.max(1, daysBetween(refDate.slice(0,10), today()));
+  const cpdVal = mainPrice > 0 ? (mainPrice / daysElapsed).toFixed(2) : null;
   const rowStyle = { ...S.row, ...(isLast ? S.rowLast : {}), gap:'10px', padding:'10px 12px' };
+  // 额外信息行
+  let extraInfo = null;
+  if (sortBy === 'timesUsed') {
+    extraInfo = <span style={{ color:'#007AFF', fontSize:'11px', fontWeight:'500' }}>使用 {item.timesUsed||0} 次</span>;
+  } else if (sortBy === 'rating' && (item.rating||0) > 0) {
+    extraInfo = <span style={{ color:'#FF9500', fontSize:'11px' }}>{'★'.repeat(item.rating||0)}</span>;
+  } else if (sortBy === 'cpw') {
+    extraInfo = <span style={{ color:'#5856D6', fontSize:'11px', fontWeight:'500' }}>CPW: {cpwVal ? `¥${cpwVal}/次` : '—'}</span>;
+  } else if (sortBy === 'dailyCost') {
+    extraInfo = <span style={{ color:'#34C759', fontSize:'11px', fontWeight:'500' }}>CPD: {cpdVal ? `¥${cpdVal}/天` : '—'}</span>;
+  }
   return (
     <div style={rowStyle}>
       {/* 左侧：点击进详情 */}
@@ -671,6 +734,7 @@ function ItemRow({ item, categories, allItems, onTap, onRecordUse, onUpdateQty, 
             {expStatus && expStatus.level < 3 && <span style={{ color: expStatus.color, fontWeight:'500' }}>{expStatus.label}</span>}
             {item.status === 1 && <span style={{ color:'#8E8E93' }}>出库</span>}
           </div>
+          {extraInfo && <div style={{ marginTop:'3px' }}>{extraInfo}</div>}
         </div>
         <div style={{ flexShrink:0, textAlign:'right' }}>
           {displayPrice > 0 && <div style={{ fontSize:'14px', fontWeight:'600', color:'#1C1C1E' }}>{fmtPrice(displayPrice)}{accTotal>0 && <span style={{fontSize:'10px',color:'#8E8E93',marginLeft:'2px'}}>含附件</span>}</div>}
@@ -1040,15 +1104,19 @@ function ItemsTab({ store, dispatch }) {
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('in');
   const [filterRating, setFilterRating] = useState(0);
   const [filterPriceMin, setFilterPriceMin] = useState('');
   const [filterPriceMax, setFilterPriceMax] = useState('');
   const [filterExpiry, setFilterExpiry] = useState('all'); // all | hasExpiry | expiringSoon | expired
+  const [filterBrand, setFilterBrand] = useState('');
+  const [filterAttrKey, setFilterAttrKey] = useState('');
+  const [filterAttrValue, setFilterAttrValue] = useState('');
+  const [filterExpiryDays, setFilterExpiryDays] = useState('');
 
   const scenes = store.categories.filter(c => !c.parentId);
   const subs = store.categories.filter(c => c.parentId);
-  const hasAdvFilter = filterStatus !== 'all' || filterRating > 0 || filterPriceMin !== '' || filterPriceMax !== '' || filterExpiry !== 'all';
+  const hasAdvFilter = filterStatus !== 'in' || filterRating > 0 || filterPriceMin !== '' || filterPriceMax !== '' || filterExpiry !== 'all' || filterBrand !== '' || filterAttrKey !== '' || filterExpiryDays !== '';
   const setScene = (id) => { setFilterCat(id); setFilterSubCat(''); };
   const effectiveCatFilter = filterSubCat || filterCat;
 
@@ -1067,24 +1135,47 @@ function ItemsTab({ store, dispatch }) {
         items = items.filter(i => i.categoryId === effectiveCatFilter);
       }
     }
-    if (filterStatus === 'in')  items = items.filter(i => i.status === 0);
-    if (filterStatus === 'out') items = items.filter(i => i.status === 1);
+    if (filterStatus === 'in')  items = items.filter(i => i.status === 0 && (i.quantity||0) > 0);
+    if (filterStatus === 'out') items = items.filter(i => i.status === 1 || (i.quantity||0) === 0);
     if (filterRating > 0) items = items.filter(i => (i.rating||0) >= filterRating);
     if (filterPriceMin !== '') items = items.filter(i => (Number(i.purchasePrice)||0) >= Number(filterPriceMin));
     if (filterPriceMax !== '') items = items.filter(i => (Number(i.purchasePrice)||0) <= Number(filterPriceMax));
     if (filterExpiry === 'hasExpiry') items = items.filter(i => !!i.expirationDate);
     if (filterExpiry === 'expired') items = items.filter(i => { const s = expiryStatus(i.expirationDate); return s && s.level === 0; });
     if (filterExpiry === 'expiringSoon') items = items.filter(i => { const s = expiryStatus(i.expirationDate); return s && s.level <= 2; });
+    if (filterBrand) items = items.filter(i => (i.brand||'').toLowerCase().includes(filterBrand.toLowerCase()));
+    if (filterAttrKey) {
+      items = items.filter(i => store.itemAttributes.some(a => a.itemId===i.id && a.key===filterAttrKey && (filterAttrValue==='' || a.value===filterAttrValue)));
+    }
+    if (filterExpiryDays !== '') {
+      const days = Number(filterExpiryDays);
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + days);
+      items = items.filter(i => i.expirationDate && new Date(i.expirationDate) <= cutoff && new Date(i.expirationDate) >= new Date());
+    }
     return items.sort((a,b) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'price') return (Number(b.purchasePrice)||0) - (Number(a.purchasePrice)||0);
       if (sortBy === 'timesUsed') return (b.timesUsed||0) - (a.timesUsed||0);
       if (sortBy === 'rating') return (b.rating||0) - (a.rating||0);
+      if (sortBy === 'cpw') {
+        const aCpw = (a.timesUsed||0)>0 ? (Number(a.purchasePrice)||0)/(a.timesUsed) : Infinity;
+        const bCpw = (b.timesUsed||0)>0 ? (Number(b.purchasePrice)||0)/(b.timesUsed) : Infinity;
+        return aCpw - bCpw;
+      }
+      if (sortBy === 'dailyCost') {
+        const refDateA = a.purchaseDate || a.createdAt || today();
+        const refDateB = b.purchaseDate || b.createdAt || today();
+        const daysA = Math.max(1, daysBetween(refDateA.slice(0,10), today()));
+        const daysB = Math.max(1, daysBetween(refDateB.slice(0,10), today()));
+        const aD = (Number(a.purchasePrice)||0) / daysA;
+        const bD = (Number(b.purchasePrice)||0) / daysB;
+        return aD - bD;
+      }
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
-  }, [store.items, store.categories, search, effectiveCatFilter, sortBy, filterStatus, filterRating, filterPriceMin, filterPriceMax, filterExpiry]);
+  }, [store.items, store.itemAttributes, store.categories, search, effectiveCatFilter, sortBy, filterStatus, filterRating, filterPriceMin, filterPriceMax, filterExpiry, filterBrand, filterAttrKey, filterAttrValue, filterExpiryDays]);
 
-  const sortLabels = { createdAt:'最新添加', name:'名称', price:'价格高低', timesUsed:'使用次数', rating:'评分' };
+  const sortLabels = { createdAt:'最新添加', name:'名称', price:'价格高低', timesUsed:'使用次数', rating:'评分', cpw:'每次成本(CPW)', dailyCost:'每日成本(CPD)' };
 
   const handleSaveItem = (formData, attrs, accessories) => {
     if (editingItem) {
@@ -1144,7 +1235,7 @@ function ItemsTab({ store, dispatch }) {
           <div style={S.card}>
             {allItems.map((item, i) => (
               <ItemRow key={item.id} item={item} categories={store.categories} allItems={store.items} isLast={i===allItems.length-1}
-                onTap={() => setDetailItem(item)} onRecordUse={handleRecordUse}
+                onTap={() => setDetailItem(item)} onRecordUse={handleRecordUse} sortBy={sortBy}
                 onUpdateQty={(item,delta) => dispatch({ type:'UPDATE_QTY', payload:{ item, delta } })} />
             ))}
           </div>
@@ -1197,8 +1288,50 @@ function ItemsTab({ store, dispatch }) {
               ))}
             </div>
           </div>
+          {/* 品牌筛选 */}
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>品牌</div>
+            <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
+              <button onClick={() => setFilterBrand('')} style={{ padding:'6px 12px', borderRadius:'16px', border:'none', background: filterBrand==='' ? '#007AFF':'#E5E5EA', color: filterBrand==='' ? '#fff':'#333', fontSize:'12px', cursor:'pointer' }}>全部</button>
+              {loadBrands().map(b => (
+                <button key={b.id} onClick={() => setFilterBrand(filterBrand===b.name ? '' : b.name)} style={{ padding:'6px 12px', borderRadius:'16px', border:'none', background: filterBrand===b.name ? '#007AFF':'#E5E5EA', color: filterBrand===b.name ? '#fff':'#333', fontSize:'12px', cursor:'pointer' }}>{b.name}</button>
+              ))}
+            </div>
+            {loadBrands().length === 0 && <div style={{ fontSize:'12px', color:'#8E8E93', marginTop:'4px' }}>还没有品牌，可在设置中添加</div>}
+          </div>
+          {/* 属性筛选 */}
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>属性筛选</div>
+            <select style={{ ...S.input, marginBottom:'6px' }} value={filterAttrKey} onChange={e => { setFilterAttrKey(e.target.value); setFilterAttrValue(''); }}>
+              <option value="">选择属性名...</option>
+              {Array.from(new Set(store.itemAttributes.map(a=>a.key).filter(Boolean))).map(k => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </select>
+            {filterAttrKey && (() => {
+              const vals = Array.from(new Set(store.itemAttributes.filter(a=>a.key===filterAttrKey).map(a=>a.value).filter(Boolean)));
+              return vals.length > 0 ? (
+                <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
+                  <button onClick={() => setFilterAttrValue('')} style={{ padding:'5px 10px', borderRadius:'14px', border:'none', background: filterAttrValue==='' ? '#5856D6':'#E5E5EA', color: filterAttrValue==='' ? '#fff':'#333', fontSize:'12px', cursor:'pointer' }}>全部</button>
+                  {vals.map(v => (
+                    <button key={v} onClick={() => setFilterAttrValue(filterAttrValue===v ? '' : v)} style={{ padding:'5px 10px', borderRadius:'14px', border:'none', background: filterAttrValue===v ? '#5856D6':'#E5E5EA', color: filterAttrValue===v ? '#fff':'#333', fontSize:'12px', cursor:'pointer' }}>{v}</button>
+                  ))}
+                </div>
+              ) : null;
+            })()}
+          </div>
+          {/* 预计到期筛选 */}
+          <div style={{ marginBottom:'20px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>预计N天内到期</div>
+            <div style={{ display:'flex', gap:'6px', alignItems:'center', marginBottom:'6px' }}>
+              {[7,30,90].map(d => (
+                <button key={d} onClick={() => setFilterExpiryDays(filterExpiryDays==String(d) ? '' : String(d))} style={{ flex:1, padding:'8px', borderRadius:'10px', border:'none', background: filterExpiryDays==String(d) ? '#FF9500':'#E5E5EA', color: filterExpiryDays==String(d) ? '#fff':'#333', fontSize:'13px', cursor:'pointer' }}>{d}天</button>
+              ))}
+            </div>
+            <input style={S.input} type="number" placeholder="自定义天数" value={filterExpiryDays} onChange={e => setFilterExpiryDays(e.target.value)} min="1" />
+          </div>
           <button style={S.btn()} onClick={() => setShowFilter(false)}>确定</button>
-          {hasAdvFilter && <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={() => { setFilterStatus('all'); setFilterRating(0); setFilterPriceMin(''); setFilterPriceMax(''); setFilterExpiry('all'); setShowFilter(false); }}>重置筛选</button>}
+          {hasAdvFilter && <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={() => { setFilterStatus('in'); setFilterRating(0); setFilterPriceMin(''); setFilterPriceMax(''); setFilterExpiry('all'); setFilterBrand(''); setFilterAttrKey(''); setFilterAttrValue(''); setFilterExpiryDays(''); setShowFilter(false); }}>重置筛选</button>}
         </div>
       </Sheet>
 
@@ -1243,6 +1376,9 @@ function ExpiryTab({ store, dispatch }) {
 
   const handleRecordUse = (item) => dispatch({ type: 'RECORD_USE', payload: item });
   const handleUpdateQty = (item, delta) => dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+  const handleOutStock = (item) => {
+    dispatch({ type: 'UPDATE_ITEM', payload: { ...item, status: 1, updatedAt: now() }, attrs: store.itemAttributes.filter(a=>a.itemId===item.id), accessories: store.items.filter(i=>i.parentItemId===item.id) });
+  };
 
   return (
     <div style={S.screen}>
@@ -1273,6 +1409,9 @@ function ExpiryTab({ store, dispatch }) {
                           <div style={{ fontSize:'15px', fontWeight:'500' }}>{item.name}</div>
                           <div style={{ fontSize:'13px', color:'#8E8E93' }}>有效期：{fmt(item.expirationDate)}</div>
                         </div>
+                        {group.key === 0 && (
+                          <button onClick={e=>{e.stopPropagation();handleOutStock(item);}} style={{ padding:'4px 10px', borderRadius:'8px', background:'#FF3B30', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer', flexShrink:0, marginRight:'4px' }}>出库</button>
+                        )}
                         <div style={{ flexShrink:0, textAlign:'right' }}>
                           {diff < 0
                             ? <span style={S.tag('#FF3B30')}>已过期 {-diff}天</span>
@@ -1649,7 +1788,7 @@ function reducer(store, action) {
     }
     case 'UPDATE_QTY': {
       const { item, delta } = action.payload;
-      const newQty = Math.max(0, (item.quantity||1) + delta);
+      const newQty = Math.max(0, (Number(item.quantity)||0) + delta);
       const n = now();
       const record = { id: genId(), itemId: item.id, type: delta > 0 ? 0 : 1, quantity: Math.abs(delta), date: today(), notes: '' };
       return {
