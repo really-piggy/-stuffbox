@@ -334,12 +334,19 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
 
       <div style={fieldWrap}>
         <div style={S.label}>品牌</div>
-        <input style={inputStyle} value={form.brand||''} onChange={e => set('brand', e.target.value)} placeholder="可选" list="brand-datalist" />
-        <datalist id="brand-datalist">
-          {loadBrands().filter(b => !form.brand || b.name.toLowerCase().includes((form.brand||'').toLowerCase())).map(b => (
-            <option key={b.id} value={b.name} />
-          ))}
-        </datalist>
+        <div style={{ position:'relative' }}>
+          <input style={inputStyle} value={form.brand||''} onChange={e => set('brand', e.target.value)} placeholder="可选" />
+          {(() => {
+            const suggestions = loadBrands().filter(b => b.name && (!form.brand || b.name.toLowerCase().includes((form.brand||'').toLowerCase())));
+            return suggestions.length > 0 && form.brand ? (
+              <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:'1px solid #E5E5EA', borderRadius:'8px', zIndex:100, maxHeight:'140px', overflowY:'auto', boxShadow:'0 4px 12px rgba(0,0,0,0.1)' }}>
+                {suggestions.map(b => (
+                  <div key={b.id} onMouseDown={e=>{e.preventDefault();set('brand',b.name);}} style={{ padding:'9px 12px', fontSize:'14px', cursor:'pointer', borderBottom:'1px solid #F2F2F7' }}>{b.name}</div>
+                ))}
+              </div>
+            ) : null;
+          })()}
+        </div>
       </div>
 
       <div style={fieldWrap}>
@@ -373,11 +380,19 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
           <div style={S.label}>数量</div>
           <div style={{ display:'flex', gap:'6px' }}>
             <input style={{ ...inputStyle, flex:'2' }} type="number" min="0" max="9999" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
-            <input style={{ ...inputStyle, flex:'1.2', minWidth:0 }} list="unit-list" placeholder="单位" value={form.unit||''} onChange={e => set('unit', e.target.value)} />
+            <input style={{ ...inputStyle, flex:'1.2', minWidth:0 }} placeholder="单位" value={form.unit||''} onChange={e => set('unit', e.target.value)} />
           </div>
-          <datalist id="unit-list">
-            {['个','件','包','盒','瓶','罐','袋','套','双','对','本','册','张','片','块','颗','粒','支','管','条','根','卷','箱','桶','升','毫升','克','千克','米','厘米'].map(u => <option key={u} value={u} />)}
-          </datalist>
+          {(() => {
+            const units = ['个','件','包','盒','瓶','罐','袋','套','双','对','本','册','张','片','块','颗','粒','支','管','条','根','卷','箱','桶','升','毫升','克','千克','米','厘米'];
+            const filtered = units.filter(u => !form.unit || u.includes(form.unit));
+            return filtered.length > 0 && form.unit && !units.some(u => u === form.unit) ? (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'4px' }}>
+                {filtered.slice(0,10).map(u => (
+                  <button key={u} type="button" onMouseDown={e=>{e.preventDefault();set('unit',u);}} style={{ padding:'3px 8px', borderRadius:'10px', border:'1px solid #007AFF', background:'#fff', color:'#007AFF', fontSize:'12px', cursor:'pointer' }}>{u}</button>
+                ))}
+              </div>
+            ) : null;
+          })()}
         </div>
         <div>
           <div style={S.label}>状态</div>
