@@ -1,5 +1,5 @@
 const CACHE_NAME = 'stuffbox-v3';
-const BASE = '/-stuffbox';
+const BASE = '/stuffbox';
 
 self.addEventListener('install', event => {
   // Force immediate activation, skip waiting
