@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="StuffBox" />
+  <meta name="theme-color" content="#007AFF" />
+  <link rel="manifest" href="manifest.json" />
+  <title>StuffBox - 物品管理</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; background: #F2F2F7; color: #1C1C1E; }
+    input, textarea, select, button { font-family: inherit; }
+    button { cursor: pointer; border: none; background: none; }
+    ::-webkit-scrollbar { display: none; }
+    * { scrollbar-width: none; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
+const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const now = () => new Date().toISOString();
+const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('zh-CN') : '—';
+const fmtPrice = (p) => p != null && p !== '' ? `¥${Number(p).toFixed(2)}` : '—';
+const daysBetween = (a, b) => Math.floor((new Date(b) - new Date(a)) / 86400000);
+const today = () => new Date().toISOString().slice(0, 10);
+
+function expiryStatus(expirationDate) {
+  if (!expirationDate) return null;
+  const diff = daysBetween(today(), expirationDate);
+  if (diff < 0) return { label: '已过期', color: '#FF3B30', level: 0 };
+  if (diff <= 7) return { label: '即将到期', color: '#FF9500', level: 1 };
+  if (diff <= 30) return { label: '30天内', color: '#FFCC00', level: 2 };
+  return { label: '正常', color: '#34C759', level: 3 };
+}
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'stuffbox_data';
+const emptyStore = () => ({ categories: [], items: [], usageRecords: [], stockRecords: [], itemAttributes: [] });
+
+function loadStore() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return emptyStore();
+    return { ...emptyStore(), ...JSON.parse(raw) };
+  } catch { return emptyStore(); }
+}
+
+function saveStore(store) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+
+// ─── Emoji Picker Data ────────────────────────────────────────────────────────
+const EMOJI_GROUPS = [
+  { label: '家居', emojis: ['🏠','🛋️','🛏️','🚿','🪴','🪑','🚪','🪞','🪟','🛁','🧹','🧺','🪣','🔑','🕯️','🖼️'] },
+  { label: '电子', emojis: ['📱','💻','📷','🎧','🖥️','⌨️','🖱️','📺','📡','🔋','💡','🖨️','📠','📹','🎙️','🎚️'] },
+  { label: '服装', emojis: ['👕','👖','👟','👜','🧢','👗','👠','👒','🧥','👔','🧣','🧤','🧦','👛','💍','⌚'] },
+  { label: '运动', emojis: ['⚽','🎾','🏊','🚴','🧘','🏋️','🎿','🏂','🧗','🤸','🏓','🏸','🥊','🎯','🛹','🏄'] },
+  { label: '食品', emojis: ['🍎','🥤','☕','🍳','🧴','🍕','🍣','🥗','🧀','🍫','🧃','🍵','🥛','🧂','🫙','🍶'] },
+  { label: '其他', emojis: ['📚','✏️','🎮','🎵','💼','🔧','🪛','🔨','🪚','💊','🩺','🎁','🧸','🪆','🗝️','📌'] },
+];
+
+const COLORS = ['#007AFF','#34C759','#FF9500','#FF2D55','#5856D6','#00C7BE','#FF6B6B','#FFB800','#8B5CF6','#EC4899','#6366F1','#14B8A6'];
+
+// ─── Global Styles ────────────────────────────────────────────────────────────
+const S = {
+  app: { display:'flex', flexDirection:'column', height:'100%', background:'#F2F2F7' },
+  screen: { flex:1, overflowY:'auto', paddingBottom:'80px' },
+  tabBar: { position:'fixed', bottom:0, left:0, right:0, height:'80px', background:'rgba(255,255,255,0.92)', backdropFilter:'blur(20px)', borderTop:'1px solid rgba(0,0,0,0.1)', display:'flex', zIndex:100, paddingBottom:'env(safe-area-inset-bottom)' },
+  tabItem: (active) => ({ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'2px', cursor:'pointer', color: active ? '#007AFF' : '#8E8E93', background:'none', border:'none', fontSize:'10px', paddingTop:'6px' }),
+  card: { background:'#fff', borderRadius:'16px', boxShadow:'0 1px 3px rgba(0,0,0,0.08)', overflow:'hidden' },
+  sectionHeader: { fontSize:'13px', color:'#6C6C70', padding:'16px 16px 6px', textTransform:'uppercase', letterSpacing:'0.5px', fontWeight:'600' },
+  row: { display:'flex', alignItems:'center', padding:'12px 16px', borderBottom:'1px solid rgba(0,0,0,0.06)', gap:'12px', background:'#fff', cursor:'pointer' },
+  rowLast: { borderBottom:'none' },
+  chevron: { color:'#C7C7CC', fontSize:'12px', marginLeft:'auto', flexShrink:0 },
+  btn: (color='#007AFF') => ({ background:color, color:'#fff', borderRadius:'12px', padding:'12px 20px', fontWeight:'600', fontSize:'15px', cursor:'pointer', border:'none', width:'100%' }),
+  btnSm: (color='#007AFF') => ({ background:color, color:'#fff', borderRadius:'8px', padding:'8px 14px', fontWeight:'600', fontSize:'13px', cursor:'pointer', border:'none' }),
+  input: { width:'100%', padding:'11px 14px', border:'1px solid #E5E5EA', borderRadius:'10px', fontSize:'15px', background:'#fff', outline:'none' },
+  label: { fontSize:'13px', color:'#6C6C70', marginBottom:'5px', display:'block' },
+  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', zIndex:200, display:'flex', alignItems:'flex-end' },
+  sheet: { background:'#F2F2F7', borderRadius:'20px 20px 0 0', width:'100%', maxHeight:'92vh', overflowY:'auto', paddingBottom:'env(safe-area-inset-bottom)' },
+  sheetHandle: { width:'36px', height:'4px', background:'#C7C7CC', borderRadius:'2px', margin:'10px auto' },
+  sheetTitle: { fontSize:'17px', fontWeight:'600', textAlign:'center', padding:'4px 16px 16px', borderBottom:'1px solid rgba(0,0,0,0.1)' },
+  hero: { background:'linear-gradient(135deg, #1E88E5, #0D47A1)', borderRadius:'16px', padding:'20px', color:'#fff', margin:'16px' },
+  tag: (color) => ({ background: color+'22', color, fontSize:'11px', padding:'2px 8px', borderRadius:'20px', fontWeight:'600', whiteSpace:'nowrap' }),
+  emojiBox: (color='#007AFF') => ({ width:'40px', height:'40px', borderRadius:'10px', background:color+'22', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', flexShrink:0 }),
+};
+
+// ─── Sheet Modal ──────────────────────────────────────────────────────────────
+function Sheet({ open, onClose, title, children }) {
+  const [visible, setVisible] = useState(false);
+  const [anim, setAnim] = useState(false);
+  useEffect(() => {
+    if (open) { setVisible(true); requestAnimationFrame(() => setAnim(true)); }
+    else { setAnim(false); setTimeout(() => setVisible(false), 280); }
+  }, [open]);
+  if (!visible) return null;
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{ ...S.sheet, transform: anim ? 'translateY(0)' : 'translateY(100%)', transition:'transform 0.28s cubic-bezier(0.32,0.72,0,1)' }}
+           onClick={e => e.stopPropagation()}>
+        <div style={S.sheetHandle} />
+        {title && <div style={S.sheetTitle}>{title}</div>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Emoji Picker ─────────────────────────────────────────────────────────────
+function EmojiPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [group, setGroup] = useState(0);
+  return (
+    <>
+      <button style={{ width:'52px', height:'52px', borderRadius:'12px', border:'1px solid #E5E5EA', background:'#fff', fontSize:'26px', cursor:'pointer' }} onClick={() => setOpen(true)}>
+        {value || '📦'}
+      </button>
+      <Sheet open={open} onClose={() => setOpen(false)} title="选择图标">
+        <div style={{ display:'flex', gap:'4px', padding:'12px 16px', overflowX:'auto' }}>
+          {EMOJI_GROUPS.map((g, i) => (
+            <button key={i} onClick={() => setGroup(i)} style={{ flexShrink:0, padding:'6px 12px', borderRadius:'20px', border:'none', background: group===i ? '#007AFF' : '#E5E5EA', color: group===i ? '#fff' : '#333', fontSize:'13px', cursor:'pointer', fontWeight: group===i ? '600' : '400' }}>
+              {g.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(8,1fr)', gap:'4px', padding:'8px 16px 20px' }}>
+          {EMOJI_GROUPS[group].emojis.map(e => (
+            <button key={e} onClick={() => { onChange(e); setOpen(false); }} style={{ fontSize:'26px', padding:'8px', borderRadius:'10px', border:'none', background: value===e ? '#007AFF22' : 'none', cursor:'pointer' }}>
+              {e}
+            </button>
+          ))}
+        </div>
+      </Sheet>
+    </>
+  );
+}
+
+// ─── Star Rating ──────────────────────────────────────────────────────────────
+function StarRating({ value=0, onChange }) {
+  return (
+    <div style={{ display:'flex', gap:'4px' }}>
+      {[1,2,3,4,5].map(n => (
+        <button key={n} onClick={() => onChange(value===n ? 0 : n)} style={{ fontSize:'24px', border:'none', background:'none', cursor:'pointer', padding:'2px' }}>
+          {n <= value ? '⭐' : '☆'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Color Picker ─────────────────────────────────────────────────────────────
+function ColorPicker({ value, onChange }) {
+  return (
+    <div style={{ display:'flex', flexWrap:'wrap', gap:'8px' }}>
+      {COLORS.map(c => (
+        <button key={c} onClick={() => onChange(c)} style={{ width:'32px', height:'32px', borderRadius:'50%', border: value===c ? '3px solid #1C1C1E' : '3px solid transparent', background:c, cursor:'pointer', outline: value===c ? '2px solid #fff' : 'none', outlineOffset:'1px' }} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Swipeable Item Row ───────────────────────────────────────────────────────
+function SwipeRow({ children, onSwipeAction, actionLabel='记录一次', actionColor='#007AFF' }) {
+  const [offset, setOffset] = useState(0);
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const isDragging = useRef(false);
+  const isHoriz = useRef(false);
+  const ACTION_W = 90;
+
+  const onTouchStart = (e) => {
+    startX.current = e.touches[0].clientX;
+    startY.current = e.touches[0].clientY;
+    isDragging.current = true;
+    isHoriz.current = false;
+  };
+  const onTouchMove = (e) => {
+    if (!isDragging.current) return;
+    const dx = e.touches[0].clientX - startX.current;
+    const dy = e.touches[0].clientY - startY.current;
+    if (!isHoriz.current) {
+      if (Math.abs(dy) > Math.abs(dx) + 4) { isDragging.current = false; return; }
+      if (Math.abs(dx) > 8) isHoriz.current = true;
+    }
+    if (!isHoriz.current) return;
+    e.preventDefault();
+    const newOff = Math.max(-ACTION_W, Math.min(0, offset + dx - (offset > -ACTION_W/2 ? 0 : 0)));
+    const raw = offset + dx;
+    setOffset(Math.max(-ACTION_W, Math.min(0, raw)));
+  };
+  const onTouchEnd = () => {
+    isDragging.current = false;
+    setOffset(prev => prev < -ACTION_W/2 ? -ACTION_W : 0);
+  };
+
+  return (
+    <div style={{ position:'relative', overflow:'hidden' }}>
+      <div style={{ position:'absolute', right:0, top:0, bottom:0, width:ACTION_W, background:actionColor, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}
+           onClick={() => { setOffset(0); onSwipeAction(); }}>
+        <span style={{ color:'#fff', fontSize:'13px', fontWeight:'600', textAlign:'center' }}>{actionLabel}</span>
+      </div>
+      <div style={{ transform:`translateX(${offset}px)`, transition: isDragging.current ? 'none' : 'transform 0.2s ease', willChange:'transform', background:'#fff', position:'relative', zIndex:1 }}
+           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Item Form ────────────────────────────────────────────────────────────────
+function ItemForm({ initial, categories, onSave, onClose }) {
+  const [form, setForm] = useState(() => ({
+    name: '', brand: '', notes: '', iconName: '📦', categoryId: '',
+    purchasePrice: '', purchaseDate: '', quantity: 1, rating: 0,
+    status: 0, expirationDate: '', notifyDaysBefore: 7,
+    parentItemId: null,
+    ...initial,
+  }));
+  const [attrs, setAttrs] = useState(() => initial?._attrs || []);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const allCats = categories;
+  const scenes = allCats.filter(c => !c.parentId);
+  const subs = allCats.filter(c => c.parentId);
+
+  const addAttr = () => setAttrs(a => [...a, { id: genId(), key:'', value:'', sortOrder: a.length }]);
+  const updateAttr = (i, k, v) => setAttrs(a => a.map((x,j) => j===i ? {...x,[k]:v} : x));
+  const removeAttr = (i) => setAttrs(a => a.filter((_,j) => j!==i));
+
+  const handleSave = () => {
+    if (!form.name.trim()) return alert('请输入物品名称');
+    onSave({ ...form, name: form.name.trim(), quantity: Math.max(1, Number(form.quantity)||1) }, attrs);
+  };
+
+  const inputStyle = { ...S.input };
+  const fieldWrap = { marginBottom:'14px' };
+
+  return (
+    <div style={{ padding:'16px', paddingBottom:'32px' }}>
+      {/* 图标 + 名称 */}
+      <div style={{ display:'flex', gap:'12px', alignItems:'flex-start', marginBottom:'14px' }}>
+        <div>
+          <div style={S.label}>图标</div>
+          <EmojiPicker value={form.iconName} onChange={v => set('iconName', v)} />
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={S.label}>名称 *</div>
+          <input style={inputStyle} value={form.name} onChange={e => set('name', e.target.value)} placeholder="物品名称" />
+        </div>
+      </div>
+
+      <div style={fieldWrap}>
+        <div style={S.label}>品牌</div>
+        <input style={inputStyle} value={form.brand||''} onChange={e => set('brand', e.target.value)} placeholder="可选" />
+      </div>
+
+      <div style={fieldWrap}>
+        <div style={S.label}>分类</div>
+        <select style={{ ...inputStyle }} value={form.categoryId||''} onChange={e => set('categoryId', e.target.value)}>
+          <option value="">不选分类</option>
+          {scenes.map(sc => (
+            <optgroup key={sc.id} label={sc.iconName + ' ' + sc.name}>
+              <option value={sc.id}>{sc.iconName} {sc.name}（场景本身）</option>
+              {subs.filter(s => s.parentId === sc.id).map(sub => (
+                <option key={sub.id} value={sub.id}>{sub.iconName} {sub.name}</option>
+              ))}
+            </optgroup>
+          ))}
+          {subs.filter(s => !scenes.find(sc => sc.id === s.parentId)).map(sub => (
+            <option key={sub.id} value={sub.id}>{sub.iconName} {sub.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' }}>
+        <div>
+          <div style={S.label}>购入价格（¥）</div>
+          <input style={inputStyle} type="number" min="0" step="0.01" value={form.purchasePrice||''} onChange={e => set('purchasePrice', e.target.value)} placeholder="0.00" />
+        </div>
+        <div>
+          <div style={S.label}>购入日期</div>
+          <input style={inputStyle} type="date" value={form.purchaseDate||''} onChange={e => set('purchaseDate', e.target.value)} />
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' }}>
+        <div>
+          <div style={S.label}>数量</div>
+          <input style={inputStyle} type="number" min="1" max="999" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
+        </div>
+        <div>
+          <div style={S.label}>状态</div>
+          <select style={{ ...inputStyle }} value={form.status} onChange={e => set('status', Number(e.target.value))}>
+            <option value={0}>在库</option>
+            <option value={1}>出库</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={fieldWrap}>
+        <div style={S.label}>评分</div>
+        <StarRating value={form.rating||0} onChange={v => set('rating', v)} />
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' }}>
+        <div>
+          <div style={S.label}>有效期</div>
+          <input style={inputStyle} type="date" value={form.expirationDate||''} onChange={e => set('expirationDate', e.target.value)} />
+        </div>
+        <div>
+          <div style={S.label}>提前提醒（天）</div>
+          <input style={inputStyle} type="number" min="1" max="365" value={form.notifyDaysBefore||7} onChange={e => set('notifyDaysBefore', Number(e.target.value))} />
+        </div>
+      </div>
+
+      <div style={fieldWrap}>
+        <div style={S.label}>备注</div>
+        <textarea style={{ ...inputStyle, height:'72px', resize:'none' }} value={form.notes||''} onChange={e => set('notes', e.target.value)} placeholder="可选" />
+      </div>
+
+      {/* 自定义属性 */}
+      <div style={{ marginBottom:'14px' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+          <div style={S.label}>自定义属性</div>
+          <button style={S.btnSm()} onClick={addAttr}>+ 添加</button>
+        </div>
+        {attrs.map((a, i) => (
+          <div key={a.id} style={{ display:'flex', gap:'8px', marginBottom:'8px' }}>
+            <input style={{ ...inputStyle, flex:1 }} placeholder="属性名" value={a.key} onChange={e => updateAttr(i,'key',e.target.value)} />
+            <input style={{ ...inputStyle, flex:1 }} placeholder="属性值" value={a.value} onChange={e => updateAttr(i,'value',e.target.value)} />
+            <button onClick={() => removeAttr(i)} style={{ color:'#FF3B30', fontSize:'20px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+          </div>
+        ))}
+      </div>
+
+      <button style={S.btn()} onClick={handleSave}>保存</button>
+      <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={onClose}>取消</button>
+    </div>
+  );
+}
+
+// ─── Category Form ────────────────────────────────────────────────────────────
+function CategoryForm({ initial, parentId, categories, onSave, onClose }) {
+  const [name, setName] = useState(initial?.name||'');
+  const [icon, setIcon] = useState(initial?.iconName||'📦');
+  const [color, setColor] = useState(initial?.colorHex||'#007AFF');
+
+  const handleSave = () => {
+    if (!name.trim()) return alert('请输入名称');
+    onSave({ name: name.trim(), iconName: icon, colorHex: color, parentId: parentId||null });
+  };
+
+  return (
+    <div style={{ padding:'16px', paddingBottom:'32px' }}>
+      <div style={{ display:'flex', gap:'12px', alignItems:'flex-start', marginBottom:'16px' }}>
+        <div>
+          <div style={S.label}>图标</div>
+          <EmojiPicker value={icon} onChange={setIcon} />
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={S.label}>名称 *</div>
+          <input style={S.input} value={name} onChange={e => setName(e.target.value)} placeholder={parentId ? '分类名称' : '场景名称'} />
+        </div>
+      </div>
+      <div style={{ marginBottom:'16px' }}>
+        <div style={S.label}>颜色</div>
+        <ColorPicker value={color} onChange={setColor} />
+      </div>
+      <button style={S.btn()} onClick={handleSave}>保存</button>
+      <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={onClose}>取消</button>
+    </div>
+  );
+}
+
+// ─── Item Detail Sheet ────────────────────────────────────────────────────────
+function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, onUpdateQty }) {
+  if (!item) return null;
+  const cat = store.categories.find(c => c.id === item.categoryId);
+  const scene = cat?.parentId ? store.categories.find(c => c.id === cat.parentId) : cat;
+  const attrs = store.itemAttributes.filter(a => a.itemId === item.id).sort((a,b)=>a.sortOrder-b.sortOrder);
+  const attachments = store.items.filter(i => i.parentItemId === item.id);
+  const stockRecords = store.stockRecords.filter(r => r.itemId === item.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const usageRecords = store.usageRecords.filter(r => r.itemId === item.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const expStatus = expiryStatus(item.expirationDate);
+
+  const price = Number(item.purchasePrice)||0;
+  const cpw = item.timesUsed > 0 && price > 0 ? (price / item.timesUsed).toFixed(2) : null;
+  const daysUsed = item.firstUsedAt ? Math.max(1, daysBetween(item.firstUsedAt, today())+1) : null;
+  const cpd = daysUsed && price > 0 ? (price / daysUsed).toFixed(2) : null;
+
+  const Section = ({ title, children }) => (
+    <div style={{ marginBottom:'12px' }}>
+      <div style={S.sectionHeader}>{title}</div>
+      <div style={S.card}>{children}</div>
+    </div>
+  );
+  const InfoRow = ({ label, value }) => (
+    <div style={{ display:'flex', justifyContent:'space-between', padding:'11px 16px', borderBottom:'1px solid rgba(0,0,0,0.06)', alignItems:'center' }}>
+      <span style={{ fontSize:'15px', color:'#6C6C70' }}>{label}</span>
+      <span style={{ fontSize:'15px', fontWeight:'500' }}>{value || '—'}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:'16px', paddingBottom:'32px' }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', gap:'14px', marginBottom:'16px' }}>
+        <div style={{ ...S.emojiBox(item.colorHex||cat?.colorHex||'#007AFF'), width:'60px', height:'60px', borderRadius:'14px', fontSize:'30px' }}>
+          {item.iconName||'📦'}
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:'20px', fontWeight:'700' }}>{item.name}</div>
+          {item.brand && <div style={{ fontSize:'14px', color:'#6C6C70', marginTop:'2px' }}>{item.brand}</div>}
+          {cat && <div style={{ fontSize:'13px', color:'#007AFF', marginTop:'4px' }}>{scene?.iconName||''} {cat.name}</div>}
+        </div>
+        <div style={{ display:'flex', gap:'8px' }}>
+          <button onClick={onEdit} style={S.btnSm()}>编辑</button>
+          <button onClick={onDelete} style={S.btnSm('#FF3B30')}>删除</button>
+        </div>
+      </div>
+
+      {/* 数量控制 */}
+      <div style={{ ...S.card, padding:'12px 16px', marginBottom:'12px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <span style={{ fontSize:'15px' }}>数量</span>
+        <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+          <button onClick={() => onUpdateQty(item, -1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#E5E5EA', border:'none', fontSize:'20px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>−</button>
+          <span style={{ fontSize:'20px', fontWeight:'600', minWidth:'32px', textAlign:'center' }}>{item.quantity||1}</span>
+          <button onClick={() => onUpdateQty(item, 1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#007AFF', border:'none', fontSize:'20px', color:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>+</button>
+        </div>
+        <button style={S.btnSm()} onClick={() => onRecordUse(item)}>记录一次</button>
+      </div>
+
+      <Section title="基础信息">
+        <InfoRow label="状态" value={item.status===1 ? '出库':'在库'} />
+        <InfoRow label="评分" value={item.rating ? '⭐'.repeat(item.rating) : '未评分'} />
+        {item.purchaseDate && <InfoRow label="购入日期" value={fmt(item.purchaseDate)} />}
+        {item.expirationDate && <InfoRow label="有效期" value={
+          <span style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+            {fmt(item.expirationDate)}
+            {expStatus && <span style={S.tag(expStatus.color)}>{expStatus.label}</span>}
+          </span>
+        } />}
+        {item.notes && <div style={{ padding:'11px 16px', fontSize:'14px', color:'#6C6C70' }}>{item.notes}</div>}
+      </Section>
+
+      <Section title="财务">
+        <InfoRow label="购入价格" value={fmtPrice(item.purchasePrice)} />
+        <InfoRow label="每次成本 CPW" value={cpw ? `¥${cpw}` : '—'} />
+        <div style={{ borderBottom:'none', display:'flex', justifyContent:'space-between', padding:'11px 16px', alignItems:'center' }}>
+          <span style={{ fontSize:'15px', color:'#6C6C70' }}>每日成本 CPD</span>
+          <span style={{ fontSize:'15px', fontWeight:'500' }}>{cpd ? `¥${cpd}` : '—'}</span>
+        </div>
+      </Section>
+
+      <Section title="使用统计">
+        <InfoRow label="使用次数" value={`${item.timesUsed||0} 次`} />
+        <InfoRow label="首次使用" value={fmt(item.firstUsedAt)} />
+        <InfoRow label="最近使用" value={fmt(item.lastUsedAt)} />
+        <div style={{ borderBottom:'none', display:'flex', justifyContent:'space-between', padding:'11px 16px', alignItems:'center' }}>
+          <span style={{ fontSize:'15px', color:'#6C6C70' }}>使用天数</span>
+          <span style={{ fontSize:'15px', fontWeight:'500' }}>{daysUsed ? `${daysUsed} 天` : '—'}</span>
+        </div>
+      </Section>
+
+      {attrs.length > 0 && (
+        <Section title="自定义属性">
+          {attrs.map((a, i) => (
+            <div key={a.id} style={{ ...(i===attrs.length-1 ? S.rowLast : {}), display:'flex', justifyContent:'space-between', padding:'11px 16px', borderBottom:'1px solid rgba(0,0,0,0.06)' }}>
+              <span style={{ fontSize:'15px', color:'#6C6C70' }}>{a.key}</span>
+              <span style={{ fontSize:'15px', fontWeight:'500' }}>{a.value}</span>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {attachments.length > 0 && (
+        <Section title={`附加物 (${attachments.length})`}>
+          {attachments.map((att, i) => (
+            <div key={att.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 16px', borderBottom: i<attachments.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+              <div style={S.emojiBox(att.colorHex||'#007AFF')}>{att.iconName||'📦'}</div>
+              <div>
+                <div style={{ fontSize:'15px' }}>{att.name}</div>
+                {att.brand && <div style={{ fontSize:'13px', color:'#8E8E93' }}>{att.brand}</div>}
+              </div>
+              {att.purchasePrice && <span style={{ marginLeft:'auto', fontSize:'14px', color:'#6C6C70' }}>{fmtPrice(att.purchasePrice)}</span>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {usageRecords.length > 0 && (
+        <Section title={`使用记录 (${usageRecords.length})`}>
+          {usageRecords.slice(0, 10).map((r, i) => (
+            <div key={r.id} style={{ display:'flex', justifyContent:'space-between', padding:'10px 16px', borderBottom: i < Math.min(9, usageRecords.length-1) ? '1px solid rgba(0,0,0,0.06)':'' }}>
+              <span style={{ fontSize:'14px', color:'#6C6C70' }}>{fmt(r.date)}</span>
+              {r.notes && <span style={{ fontSize:'14px' }}>{r.notes}</span>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {stockRecords.length > 0 && (
+        <Section title={`库存记录 (${stockRecords.length})`}>
+          {stockRecords.slice(0, 10).map((r, i) => (
+            <div key={r.id} style={{ display:'flex', justifyContent:'space-between', padding:'10px 16px', borderBottom: i < Math.min(9, stockRecords.length-1) ? '1px solid rgba(0,0,0,0.06)':'' }}>
+              <span style={{ fontSize:'14px', color: r.type===0?'#34C759':'#FF3B30' }}>{r.type===0?'入库':'出库'} {r.quantity}</span>
+              <span style={{ fontSize:'14px', color:'#6C6C70' }}>{fmt(r.date)}</span>
+            </div>
+          ))}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// ─── Item Row Component ───────────────────────────────────────────────────────
+function ItemRow({ item, categories, onTap, onRecordUse, isLast }) {
+  const cat = categories.find(c => c.id === item.categoryId);
+  const expStatus = expiryStatus(item.expirationDate);
+  const rowStyle = { ...S.row, ...(isLast ? S.rowLast : {}), gap:'12px', padding:'10px 16px' };
+  return (
+    <SwipeRow onSwipeAction={() => onRecordUse(item)}>
+      <div style={rowStyle} onClick={onTap}>
+        <div style={S.emojiBox(item.colorHex||cat?.colorHex||'#007AFF')}>
+          {item.iconName||'📦'}
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:'15px', fontWeight:'500', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
+          <div style={{ fontSize:'13px', color:'#8E8E93', marginTop:'2px', display:'flex', gap:'4px', alignItems:'center' }}>
+            {item.brand && <span>{item.brand}</span>}
+            {item.brand && cat && <span>·</span>}
+            {cat && <span>{cat.iconName} {cat.name}</span>}
+          </div>
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'4px', flexShrink:0 }}>
+          {item.purchasePrice ? <span style={{ fontSize:'14px', fontWeight:'600', color:'#1C1C1E' }}>{fmtPrice(item.purchasePrice)}</span> : null}
+          {expStatus && expStatus.level < 3 && <span style={S.tag(expStatus.color)}>{expStatus.label}</span>}
+          {item.status === 1 && <span style={S.tag('#8E8E93')}>出库</span>}
+        </div>
+        <span style={S.chevron}>›</span>
+      </div>
+    </SwipeRow>
+  );
+}
+
+// ─── HOME TAB ─────────────────────────────────────────────────────────────────
+function HomeTab({ store, dispatch }) {
+  const [expandedScenes, setExpandedScenes] = useState({});
+  const [showCatForm, setShowCatForm] = useState(false);
+  const [editingCat, setEditingCat] = useState(null);
+  const [addSubParent, setAddSubParent] = useState(null);
+  const [selectedCat, setSelectedCat] = useState(null);
+  const [showItemList, setShowItemList] = useState(false);
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [detailItem, setDetailItem] = useState(null);
+
+  const scenes = store.categories.filter(c => !c.parentId).sort((a,b)=>a.sortOrder-b.sortOrder);
+  const totalAsset = store.items.reduce((s,i)=> s+(Number(i.purchasePrice)||0)*(i.quantity||1), 0);
+  const sceneCount = scenes.length;
+
+  const toggleScene = (id) => setExpandedScenes(e => ({ ...e, [id]: !e[id] }));
+
+  const openItemList = (catId) => { setSelectedCat(catId); setShowItemList(true); };
+
+  const getItemsForCat = (catId) => {
+    const cat = store.categories.find(c => c.id === catId);
+    if (!cat) return [];
+    if (!cat.parentId) {
+      // scene: include scene itself + all sub-cats
+      const subIds = store.categories.filter(c => c.parentId === catId).map(c => c.id);
+      return store.items.filter(i => !i.parentItemId && (i.categoryId === catId || subIds.includes(i.categoryId)));
+    }
+    return store.items.filter(i => !i.parentItemId && i.categoryId === catId);
+  };
+
+  const handleSaveCat = (data) => {
+    if (editingCat) {
+      dispatch({ type: 'UPDATE_CAT', payload: { ...editingCat, ...data } });
+    } else {
+      const siblings = store.categories.filter(c => c.parentId === (addSubParent||null));
+      dispatch({ type: 'ADD_CAT', payload: { id: genId(), sortOrder: siblings.length, createdAt: now(), ...data, parentId: addSubParent||null } });
+    }
+    setShowCatForm(false); setEditingCat(null); setAddSubParent(null);
+  };
+
+  const handleDeleteCat = (cat) => {
+    if (!window.confirm(`确认删除"${cat.name}"？`)) return;
+    dispatch({ type: 'DELETE_CAT', payload: cat.id });
+  };
+
+  const handleSaveItem = (formData, attrs) => {
+    if (editingItem) {
+      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
+    } else {
+      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs });
+    }
+    setShowItemForm(false); setEditingItem(null);
+  };
+
+  const handleRecordUse = (item) => {
+    dispatch({ type: 'RECORD_USE', payload: item });
+  };
+
+  const handleUpdateQty = (item, delta) => {
+    dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+  };
+
+  const catItems = selectedCat ? getItemsForCat(selectedCat) : [];
+
+  return (
+    <div style={S.screen}>
+      {/* Hero Card */}
+      <div style={S.hero}>
+        <div style={{ fontSize:'14px', opacity:0.8, marginBottom:'12px' }}>StuffBox 资产总览</div>
+        <div style={{ fontSize:'32px', fontWeight:'700', marginBottom:'4px' }}>¥{totalAsset.toFixed(2)}</div>
+        <div style={{ display:'flex', gap:'20px', marginTop:'12px' }}>
+          <div style={{ textAlign:'center' }}>
+            <div style={{ fontSize:'22px', fontWeight:'700' }}>{store.items.filter(i=>!i.parentItemId).length}</div>
+            <div style={{ fontSize:'12px', opacity:0.75 }}>物品</div>
+          </div>
+          <div style={{ width:'1px', background:'rgba(255,255,255,0.3)' }} />
+          <div style={{ textAlign:'center' }}>
+            <div style={{ fontSize:'22px', fontWeight:'700' }}>{sceneCount}</div>
+            <div style={{ fontSize:'12px', opacity:0.75 }}>场景</div>
+          </div>
+          <div style={{ width:'1px', background:'rgba(255,255,255,0.3)' }} />
+          <div style={{ textAlign:'center' }}>
+            <div style={{ fontSize:'22px', fontWeight:'700' }}>{store.categories.filter(c=>c.parentId).length}</div>
+            <div style={{ fontSize:'12px', opacity:0.75 }}>分类</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Scenes */}
+      <div style={{ padding:'0 16px' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+          <div style={S.sectionHeader}>场景</div>
+          <button style={S.btnSm()} onClick={() => { setEditingCat(null); setAddSubParent(null); setShowCatForm(true); }}>+ 添加场景</button>
+        </div>
+
+        {scenes.length === 0 && (
+          <div style={{ ...S.card, padding:'32px', textAlign:'center', color:'#8E8E93' }}>
+            还没有场景，点击"添加场景"开始吧
+          </div>
+        )}
+
+        {scenes.map(scene => {
+          const subCats = store.categories.filter(c => c.parentId === scene.id);
+          const sceneItemCount = getItemsForCat(scene.id).length;
+          const expanded = expandedScenes[scene.id];
+          return (
+            <div key={scene.id} style={{ ...S.card, marginBottom:'10px' }}>
+              {/* Scene Header */}
+              <div style={{ display:'flex', alignItems:'center', padding:'12px 16px', cursor:'pointer' }} onClick={() => toggleScene(scene.id)}>
+                <div style={{ ...S.emojiBox(scene.colorHex), marginRight:'12px' }}>{scene.iconName||'🏠'}</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:'15px', fontWeight:'600' }}>{scene.name}</div>
+                  <div style={{ fontSize:'13px', color:'#8E8E93' }}>{sceneItemCount} 件物品 · {subCats.length} 个分类</div>
+                </div>
+                <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                  <button onClick={e => { e.stopPropagation(); openItemList(scene.id); }} style={{ ...S.btnSm(), padding:'5px 10px', fontSize:'12px' }}>查看</button>
+                  <button onClick={e => { e.stopPropagation(); setEditingCat(scene); setAddSubParent(null); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'5px 10px', fontSize:'12px' }}>编辑</button>
+                  <button onClick={e => { e.stopPropagation(); handleDeleteCat(scene); }} style={{ color:'#FF3B30', fontSize:'18px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+                  <span style={{ color:'#C7C7CC', fontSize:'14px', transform: expanded ? 'rotate(90deg)':'rotate(0deg)', transition:'0.2s' }}>›</span>
+                </div>
+              </div>
+
+              {/* Sub-categories */}
+              {expanded && (
+                <div style={{ borderTop:'1px solid rgba(0,0,0,0.06)' }}>
+                  {subCats.map((sub, i) => {
+                    const subCount = store.items.filter(item => !item.parentItemId && item.categoryId === sub.id).length;
+                    return (
+                      <div key={sub.id} style={{ display:'flex', alignItems:'center', padding:'10px 16px 10px 28px', borderBottom: i<subCats.length ? '1px solid rgba(0,0,0,0.04)':'', cursor:'pointer' }} onClick={() => openItemList(sub.id)}>
+                        <div style={{ ...S.emojiBox(sub.colorHex), width:'32px', height:'32px', fontSize:'16px', marginRight:'10px' }}>{sub.iconName||'📁'}</div>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:'14px', fontWeight:'500' }}>{sub.name}</div>
+                          <div style={{ fontSize:'12px', color:'#8E8E93' }}>{subCount} 件</div>
+                        </div>
+                        <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                          <button onClick={e => { e.stopPropagation(); setEditingCat(sub); setAddSubParent(scene.id); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'4px 8px', fontSize:'11px' }}>编辑</button>
+                          <button onClick={e => { e.stopPropagation(); handleDeleteCat(sub); }} style={{ color:'#FF3B30', fontSize:'16px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+                          <span style={S.chevron}>›</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <button onClick={() => { setAddSubParent(scene.id); setEditingCat(null); setShowCatForm(true); }}
+                          style={{ width:'100%', padding:'10px 16px 10px 28px', textAlign:'left', color:'#007AFF', fontSize:'14px', background:'none', border:'none', cursor:'pointer', borderTop: subCats.length > 0 ? '1px solid rgba(0,0,0,0.04)':'' }}>
+                    + 添加分类
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Category Form Sheet */}
+      <Sheet open={showCatForm} onClose={() => { setShowCatForm(false); setEditingCat(null); setAddSubParent(null); }} title={editingCat ? '编辑' : (addSubParent ? '添加分类' : '添加场景')}>
+        <CategoryForm initial={editingCat} parentId={addSubParent} categories={store.categories} onSave={handleSaveCat} onClose={() => { setShowCatForm(false); setEditingCat(null); setAddSubParent(null); }} />
+      </Sheet>
+
+      {/* Item List Sheet */}
+      <Sheet open={showItemList} onClose={() => setShowItemList(false)} title={selectedCat ? (store.categories.find(c=>c.id===selectedCat)?.name||'物品列表') : '物品列表'}>
+        <div style={{ padding:'8px 16px 8px' }}>
+          <button style={S.btn()} onClick={() => { setEditingItem(null); setShowItemForm(true); }}>+ 添加物品</button>
+        </div>
+        <div style={{ padding:'0 16px 20px' }}>
+          {catItems.length === 0 ? (
+            <div style={{ textAlign:'center', color:'#8E8E93', padding:'32px' }}>还没有物品</div>
+          ) : (
+            <div style={S.card}>
+              {catItems.map((item, i) => (
+                <ItemRow key={item.id} item={item} categories={store.categories} isLast={i===catItems.length-1}
+                  onTap={() => { setDetailItem(item); }}
+                  onRecordUse={handleRecordUse} />
+              ))}
+            </div>
+          )}
+        </div>
+      </Sheet>
+
+      {/* Item Form Sheet */}
+      <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title={editingItem ? '编辑物品' : '添加物品'}>
+        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) } : { categoryId: selectedCat||'' }}
+          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
+      </Sheet>
+
+      {/* Item Detail Sheet */}
+      <Sheet open={!!detailItem} onClose={() => setDetailItem(null)} title="物品详情">
+        <ItemDetailSheet item={detailItem} store={store}
+          onClose={() => setDetailItem(null)}
+          onEdit={() => { setEditingItem(detailItem); setDetailItem(null); setShowItemForm(true); }}
+          onDelete={() => { if(window.confirm('确认删除?')) { dispatch({type:'DELETE_ITEM', payload: detailItem.id}); setDetailItem(null); }}}
+          onRecordUse={handleRecordUse}
+          onUpdateQty={handleUpdateQty} />
+      </Sheet>
+    </div>
+  );
+}
+
+// ─── ITEMS TAB ────────────────────────────────────────────────────────────────
+function ItemsTab({ store, dispatch }) {
+  const [search, setSearch] = useState('');
+  const [filterCat, setFilterCat] = useState('');
+  const [sortBy, setSortBy] = useState('createdAt');
+  const [showSort, setShowSort] = useState(false);
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [detailItem, setDetailItem] = useState(null);
+
+  const scenes = store.categories.filter(c => !c.parentId);
+  const subs = store.categories.filter(c => c.parentId);
+
+  const allItems = useMemo(() => {
+    let items = store.items.filter(i => !i.parentItemId);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      items = items.filter(i => i.name.toLowerCase().includes(q) || (i.brand||'').toLowerCase().includes(q) || (i.notes||'').toLowerCase().includes(q));
+    }
+    if (filterCat) {
+      const cat = store.categories.find(c => c.id === filterCat);
+      if (cat && !cat.parentId) {
+        const subIds = store.categories.filter(c => c.parentId === filterCat).map(c => c.id);
+        items = items.filter(i => i.categoryId === filterCat || subIds.includes(i.categoryId));
+      } else {
+        items = items.filter(i => i.categoryId === filterCat);
+      }
+    }
+    return items.sort((a,b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'price') return (Number(b.purchasePrice)||0) - (Number(a.purchasePrice)||0);
+      if (sortBy === 'timesUsed') return (b.timesUsed||0) - (a.timesUsed||0);
+      if (sortBy === 'rating') return (b.rating||0) - (a.rating||0);
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+  }, [store.items, store.categories, search, filterCat, sortBy]);
+
+  const sortLabels = { createdAt:'最新添加', name:'名称', price:'价格', timesUsed:'使用次数', rating:'评分' };
+
+  const handleSaveItem = (formData, attrs) => {
+    if (editingItem) {
+      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
+    } else {
+      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs });
+    }
+    setShowItemForm(false); setEditingItem(null);
+  };
+
+  const handleRecordUse = (item) => dispatch({ type: 'RECORD_USE', payload: item });
+  const handleUpdateQty = (item, delta) => dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+
+  return (
+    <div style={S.screen}>
+      <div style={{ padding:'12px 16px 0' }}>
+        {/* Search */}
+        <div style={{ position:'relative', marginBottom:'10px' }}>
+          <span style={{ position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', color:'#8E8E93', fontSize:'16px' }}>🔍</span>
+          <input style={{ ...S.input, paddingLeft:'36px' }} placeholder="搜索物品名称、品牌..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+
+        {/* Filter chips */}
+        <div style={{ display:'flex', gap:'8px', overflowX:'auto', paddingBottom:'8px', marginBottom:'4px' }}>
+          <button onClick={() => setFilterCat('')} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat==='' ? '#007AFF' : '#E5E5EA', color: filterCat==='' ? '#fff' : '#333', fontSize:'13px', cursor:'pointer', fontWeight: filterCat==='' ? '600':'400' }}>
+            全部
+          </button>
+          {scenes.map(sc => (
+            <React.Fragment key={sc.id}>
+              <button onClick={() => setFilterCat(sc.id)} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat===sc.id ? sc.colorHex||'#007AFF' : '#E5E5EA', color: filterCat===sc.id ? '#fff' : '#333', fontSize:'13px', cursor:'pointer' }}>
+                {sc.iconName} {sc.name}
+              </button>
+              {subs.filter(s => s.parentId===sc.id).map(sub => (
+                <button key={sub.id} onClick={() => setFilterCat(sub.id)} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat===sub.id ? sub.colorHex||'#007AFF' : '#F5F5F5', color: filterCat===sub.id ? '#fff' : '#555', fontSize:'12px', cursor:'pointer' }}>
+                  {sub.iconName} {sub.name}
+                </button>
+              ))}
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* Sort & Add */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}>
+          <button onClick={() => setShowSort(true)} style={{ fontSize:'13px', color:'#007AFF', background:'none', border:'none', cursor:'pointer' }}>
+            排序: {sortLabels[sortBy]} ▾
+          </button>
+          <span style={{ fontSize:'13px', color:'#8E8E93' }}>{allItems.length} 件</span>
+          <button style={S.btnSm()} onClick={() => { setEditingItem(null); setShowItemForm(true); }}>+ 添加</button>
+        </div>
+      </div>
+
+      {/* Items List */}
+      <div style={{ padding:'0 16px 8px' }}>
+        {allItems.length === 0 ? (
+          <div style={{ ...S.card, padding:'48px', textAlign:'center', color:'#8E8E93' }}>
+            {search || filterCat ? '没有匹配的物品' : '还没有物品，点击 + 添加'}
+          </div>
+        ) : (
+          <div style={S.card}>
+            {allItems.map((item, i) => (
+              <ItemRow key={item.id} item={item} categories={store.categories} isLast={i===allItems.length-1}
+                onTap={() => setDetailItem(item)}
+                onRecordUse={handleRecordUse} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Sort Sheet */}
+      <Sheet open={showSort} onClose={() => setShowSort(false)} title="排序方式">
+        <div style={{ padding:'8px 16px 32px' }}>
+          {Object.entries(sortLabels).map(([k,v]) => (
+            <button key={k} onClick={() => { setSortBy(k); setShowSort(false); }}
+              style={{ ...S.row, background: k===sortBy ? '#007AFF11':'#fff', borderRadius:'12px', marginBottom:'6px', border:'none', width:'100%', textAlign:'left', fontSize:'15px', fontWeight: k===sortBy ? '600':'400', color: k===sortBy ? '#007AFF':'#1C1C1E' }}>
+              {v} {k===sortBy ? '✓' : ''}
+            </button>
+          ))}
+        </div>
+      </Sheet>
+
+      {/* Item Form */}
+      <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title={editingItem ? '编辑物品':'添加物品'}>
+        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) } : {}}
+          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
+      </Sheet>
+
+      {/* Item Detail */}
+      <Sheet open={!!detailItem} onClose={() => setDetailItem(null)} title="物品详情">
+        <ItemDetailSheet item={detailItem} store={store}
+          onClose={() => setDetailItem(null)}
+          onEdit={() => { setEditingItem(detailItem); setDetailItem(null); setShowItemForm(true); }}
+          onDelete={() => { if(window.confirm('确认删除?')) { dispatch({type:'DELETE_ITEM', payload: detailItem.id}); setDetailItem(null); }}}
+          onRecordUse={handleRecordUse}
+          onUpdateQty={handleUpdateQty} />
+      </Sheet>
+    </div>
+  );
+}
+
+// ─── EXPIRY TAB ───────────────────────────────────────────────────────────────
+function ExpiryTab({ store, dispatch }) {
+  const [detailItem, setDetailItem] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
+  const [showItemForm, setShowItemForm] = useState(false);
+
+  const itemsWithExpiry = store.items.filter(i => i.expirationDate && !i.parentItemId)
+    .map(i => ({ ...i, _status: expiryStatus(i.expirationDate) }))
+    .sort((a,b) => new Date(a.expirationDate) - new Date(b.expirationDate));
+
+  const groups = [
+    { key:0, label:'已过期', color:'#FF3B30', items: itemsWithExpiry.filter(i=>i._status.level===0) },
+    { key:1, label:'即将到期 (7天内)', color:'#FF9500', items: itemsWithExpiry.filter(i=>i._status.level===1) },
+    { key:2, label:'30天内', color:'#FFCC00', items: itemsWithExpiry.filter(i=>i._status.level===2) },
+    { key:3, label:'正常', color:'#34C759', items: itemsWithExpiry.filter(i=>i._status.level===3) },
+  ].filter(g => g.items.length > 0);
+
+  const handleSaveItem = (formData, attrs) => {
+    dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
+    setShowItemForm(false); setEditingItem(null);
+  };
+
+  const handleRecordUse = (item) => dispatch({ type: 'RECORD_USE', payload: item });
+  const handleUpdateQty = (item, delta) => dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+
+  return (
+    <div style={S.screen}>
+      <div style={{ padding:'16px 16px 0' }}>
+        {itemsWithExpiry.length === 0 ? (
+          <div style={{ ...S.card, padding:'48px 16px', textAlign:'center', color:'#8E8E93' }}>
+            <div style={{ fontSize:'48px', marginBottom:'12px' }}>⏰</div>
+            <div style={{ fontSize:'16px' }}>没有设置有效期的物品</div>
+            <div style={{ fontSize:'13px', marginTop:'6px' }}>在添加/编辑物品时设置有效期</div>
+          </div>
+        ) : (
+          groups.map(group => (
+            <div key={group.key} style={{ marginBottom:'16px' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+                <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:group.color }} />
+                <div style={{ fontSize:'14px', fontWeight:'600', color:'#6C6C70' }}>{group.label}</div>
+                <div style={{ fontSize:'13px', color:'#8E8E93' }}>{group.items.length} 件</div>
+              </div>
+              <div style={S.card}>
+                {group.items.map((item, i) => {
+                  const diff = daysBetween(today(), item.expirationDate);
+                  const cat = store.categories.find(c => c.id === item.categoryId);
+                  return (
+                    <SwipeRow key={item.id} onSwipeAction={() => handleRecordUse(item)}>
+                      <div style={{ ...S.row, ...(i===group.items.length-1 ? S.rowLast : {}) }} onClick={() => setDetailItem(item)}>
+                        <div style={S.emojiBox(item.colorHex||cat?.colorHex||'#007AFF')}>{item.iconName||'📦'}</div>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:'15px', fontWeight:'500' }}>{item.name}</div>
+                          <div style={{ fontSize:'13px', color:'#8E8E93' }}>有效期：{fmt(item.expirationDate)}</div>
+                        </div>
+                        <div style={{ flexShrink:0, textAlign:'right' }}>
+                          {diff < 0
+                            ? <span style={S.tag('#FF3B30')}>已过期 {-diff}天</span>
+                            : diff === 0
+                            ? <span style={S.tag('#FF3B30')}>今天到期</span>
+                            : <span style={S.tag(group.color)}>剩余 {diff}天</span>
+                          }
+                        </div>
+                        <span style={S.chevron}>›</span>
+                      </div>
+                    </SwipeRow>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <Sheet open={!!detailItem} onClose={() => setDetailItem(null)} title="物品详情">
+        <ItemDetailSheet item={detailItem} store={store}
+          onClose={() => setDetailItem(null)}
+          onEdit={() => { setEditingItem(detailItem); setDetailItem(null); setShowItemForm(true); }}
+          onDelete={() => { if(window.confirm('确认删除?')) { dispatch({type:'DELETE_ITEM', payload: detailItem.id}); setDetailItem(null); }}}
+          onRecordUse={handleRecordUse}
+          onUpdateQty={handleUpdateQty} />
+      </Sheet>
+
+      <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title="编辑物品">
+        {editingItem && <ItemForm initial={{ ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) }}
+          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />}
+      </Sheet>
+    </div>
+  );
+}
+
+// ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
+function SettingsTab({ store, dispatch }) {
+  const exportCSV = () => {
+    const rows = [
+      ['名称','品牌','备注','分类','价格','购入日期','数量','评分','状态','有效期','使用次数','首次使用','最近使用'],
+      ...store.items.filter(i=>!i.parentItemId).map(item => {
+        const cat = store.categories.find(c=>c.id===item.categoryId);
+        return [
+          item.name, item.brand||'', item.notes||'',
+          cat ? cat.name : '',
+          item.purchasePrice||'', item.purchaseDate||'',
+          item.quantity||1, item.rating||0,
+          item.status===0?'在库':'出库',
+          item.expirationDate||'',
+          item.timesUsed||0, item.firstUsedAt||'', item.lastUsedAt||''
+        ];
+      })
+    ];
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `stuffbox_${today()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify(store, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `stuffbox_backup_${today()}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importJSON = () => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.json';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (!data.items || !data.categories) throw new Error('格式错误');
+          if (!window.confirm('确认导入？将覆盖当前所有数据')) return;
+          dispatch({ type: 'REPLACE_STORE', payload: { ...emptyStore(), ...data } });
+          alert('导入成功！');
+        } catch(err) { alert('导入失败：' + err.message); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  const clearAll = () => {
+    if (!window.confirm('确认清空所有数据？此操作不可恢复！')) return;
+    if (!window.confirm('再次确认：清空所有物品、分类和记录？')) return;
+    dispatch({ type: 'REPLACE_STORE', payload: emptyStore() });
+    alert('数据已清空');
+  };
+
+  const stats = {
+    items: store.items.filter(i=>!i.parentItemId).length,
+    categories: store.categories.length,
+    scenes: store.categories.filter(c=>!c.parentId).length,
+    usageRecords: store.usageRecords.length,
+    totalValue: store.items.filter(i=>!i.parentItemId).reduce((s,i)=>s+(Number(i.purchasePrice)||0)*(i.quantity||1),0),
+  };
+
+  const SettingRow = ({ icon, label, value, onClick, danger }) => (
+    <div style={{ ...S.row, cursor: onClick ? 'pointer':'default', color: danger ? '#FF3B30' : '#1C1C1E' }} onClick={onClick}>
+      <span style={{ fontSize:'22px' }}>{icon}</span>
+      <span style={{ flex:1, fontSize:'15px' }}>{label}</span>
+      {value && <span style={{ fontSize:'14px', color:'#8E8E93' }}>{value}</span>}
+      {onClick && <span style={S.chevron}>›</span>}
+    </div>
+  );
+
+  return (
+    <div style={S.screen}>
+      <div style={{ padding:'16px' }}>
+        {/* Stats */}
+        <div style={S.sectionHeader}>数据统计</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="📦" label="物品总数" value={`${stats.items} 件`} />
+          <SettingRow icon="🏠" label="场景数量" value={`${stats.scenes} 个`} />
+          <SettingRow icon="🏷️" label="分类数量" value={`${stats.categories} 个`} />
+          <SettingRow icon="📊" label="使用记录" value={`${stats.usageRecords} 条`} />
+          <SettingRow icon="💰" label="总资产估值" value={`¥${stats.totalValue.toFixed(2)}`} />
+        </div>
+
+        {/* Export */}
+        <div style={S.sectionHeader}>数据管理</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="📤" label="导出 CSV" value="备份物品数据" onClick={exportCSV} />
+          <SettingRow icon="💾" label="导出 JSON 备份" value="完整数据备份" onClick={exportJSON} />
+          <SettingRow icon="📥" label="导入 JSON 备份" value="从备份恢复" onClick={importJSON} />
+          <SettingRow icon="🗑️" label="清空所有数据" onClick={clearAll} danger />
+        </div>
+
+        {/* About */}
+        <div style={S.sectionHeader}>关于</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="📱" label="StuffBox" value="v1.0.0" />
+          <SettingRow icon="💡" label="数据存储" value="本地 localStorage" />
+          <div style={{ padding:'12px 16px', fontSize:'13px', color:'#8E8E93', lineHeight:'1.6' }}>
+            数据仅存储在您的设备本地，不上传任何服务器。请定期导出备份，清除浏览器数据会导致数据丢失。
+          </div>
+        </div>
+
+        {/* PWA Tips */}
+        <div style={S.sectionHeader}>添加到主屏幕</div>
+        <div style={{ ...S.card, padding:'16px' }}>
+          <div style={{ fontSize:'14px', color:'#6C6C70', lineHeight:'1.7' }}>
+            <div style={{ marginBottom:'8px' }}>📱 <strong>iPhone/iPad:</strong> 用 Safari 打开 → 底部分享按钮 → 添加到主屏幕</div>
+            <div>🤖 <strong>Android:</strong> 用 Chrome 打开 → 右上角菜单 → 添加到主屏幕</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reducer ──────────────────────────────────────────────────────────────────
+function reducer(store, action) {
+  switch (action.type) {
+    case 'ADD_CAT':
+      return { ...store, categories: [...store.categories, action.payload] };
+    case 'UPDATE_CAT':
+      return { ...store, categories: store.categories.map(c => c.id===action.payload.id ? action.payload : c) };
+    case 'DELETE_CAT': {
+      const id = action.payload;
+      const subIds = store.categories.filter(c => c.parentId===id).map(c=>c.id);
+      const allRemoved = [id, ...subIds];
+      return {
+        ...store,
+        categories: store.categories.filter(c => !allRemoved.includes(c.id)),
+        items: store.items.map(i => allRemoved.includes(i.categoryId) ? { ...i, categoryId: '' } : i),
+      };
+    }
+    case 'ADD_ITEM': {
+      const { attrs, ..._ } = action;
+      const item = action.payload;
+      const newAttrs = (action.attrs||[]).map((a,i) => ({ ...a, id: a.id||genId(), itemId: item.id, sortOrder: i }));
+      return { ...store, items: [...store.items, item], itemAttributes: [...store.itemAttributes, ...newAttrs] };
+    }
+    case 'UPDATE_ITEM': {
+      const item = action.payload;
+      const oldAttrs = store.itemAttributes.filter(a => a.itemId !== item.id);
+      const newAttrs = (action.attrs||[]).map((a,i) => ({ ...a, id: a.id||genId(), itemId: item.id, sortOrder: i }));
+      return { ...store, items: store.items.map(i => i.id===item.id ? item : i), itemAttributes: [...oldAttrs, ...newAttrs] };
+    }
+    case 'DELETE_ITEM':
+      return {
+        ...store,
+        items: store.items.filter(i => i.id!==action.payload && i.parentItemId!==action.payload),
+        usageRecords: store.usageRecords.filter(r => r.itemId!==action.payload),
+        stockRecords: store.stockRecords.filter(r => r.itemId!==action.payload),
+        itemAttributes: store.itemAttributes.filter(a => a.itemId!==action.payload),
+      };
+    case 'RECORD_USE': {
+      const item = action.payload;
+      const n = now();
+      const record = { id: genId(), itemId: item.id, date: today(), notes: '' };
+      return {
+        ...store,
+        items: store.items.map(i => i.id===item.id ? {
+          ...i, timesUsed: (i.timesUsed||0)+1, lastUsedAt: n, firstUsedAt: i.firstUsedAt || n, updatedAt: n
+        } : i),
+        usageRecords: [...store.usageRecords, record],
+      };
+    }
+    case 'UPDATE_QTY': {
+      const { item, delta } = action.payload;
+      const newQty = Math.max(0, (item.quantity||1) + delta);
+      const n = now();
+      const record = { id: genId(), itemId: item.id, type: delta > 0 ? 0 : 1, quantity: Math.abs(delta), date: today(), notes: '' };
+      return {
+        ...store,
+        items: store.items.map(i => i.id===item.id ? { ...i, quantity: newQty, updatedAt: n } : i),
+        stockRecords: [...store.stockRecords, record],
+      };
+    }
+    case 'REPLACE_STORE':
+      return action.payload;
+    default:
+      return store;
+  }
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState(0);
+  const [store, dispatch_] = React.useReducer(reducer, null, loadStore);
+
+  const dispatch = useCallback((action) => {
+    dispatch_(action);
+  }, []);
+
+  useEffect(() => {
+    saveStore(store);
+  }, [store]);
+
+  // Register service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  }, []);
+
+  const tabs = [
+    { icon: '🏠', label: '首页' },
+    { icon: '📦', label: '我的物品' },
+    { icon: '⏰', label: '到期' },
+    { icon: '⚙️', label: '设置' },
+  ];
+
+  const expiringSoon = store.items.filter(i => {
+    if (!i.expirationDate || i.parentItemId) return false;
+    const s = expiryStatus(i.expirationDate);
+    return s && s.level <= 1;
+  }).length;
+
+  return (
+    <div style={S.app}>
+      {/* Tab Content */}
+      {tab === 0 && <HomeTab store={store} dispatch={dispatch} />}
+      {tab === 1 && <ItemsTab store={store} dispatch={dispatch} />}
+      {tab === 2 && <ExpiryTab store={store} dispatch={dispatch} />}
+      {tab === 3 && <SettingsTab store={store} dispatch={dispatch} />}
+
+      {/* Tab Bar */}
+      <div style={S.tabBar}>
+        {tabs.map((t, i) => (
+          <button key={i} style={S.tabItem(tab===i)} onClick={() => setTab(i)}>
+            <div style={{ position:'relative', fontSize:'24px', lineHeight:1 }}>
+              {t.icon}
+              {i===2 && expiringSoon > 0 && (
+                <div style={{ position:'absolute', top:'-4px', right:'-6px', background:'#FF3B30', color:'#fff', borderRadius:'10px', fontSize:'9px', minWidth:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:'700', padding:'0 3px' }}>
+                  {expiringSoon}
+                </div>
+              )}
+            </div>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
