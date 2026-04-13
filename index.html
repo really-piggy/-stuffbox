@@ -132,14 +132,23 @@ function Sheet({ open, onClose, title, children }) {
   const [visible, setVisible] = useState(false);
   const [anim, setAnim] = useState(false);
   useEffect(() => {
-    if (open) { setVisible(true); requestAnimationFrame(() => setAnim(true)); }
-    else { setAnim(false); setTimeout(() => setVisible(false), 280); }
+    if (open) {
+      setVisible(true);
+      requestAnimationFrame(() => setAnim(true));
+      document.body.style.overflow = 'hidden';
+    } else {
+      setAnim(false);
+      setTimeout(() => setVisible(false), 280);
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
   }, [open]);
   if (!visible) return null;
   return (
-    <div style={S.overlay} onClick={onClose}>
+    <div style={S.overlay} onClick={onClose} onTouchMove={e => e.stopPropagation()}>
       <div style={{ ...S.sheet, transform: anim ? 'translateY(0)' : 'translateY(100%)', transition:'transform 0.28s cubic-bezier(0.32,0.72,0,1)' }}
-           onClick={e => e.stopPropagation()}>
+           onClick={e => e.stopPropagation()}
+           onTouchMove={e => e.stopPropagation()}>
         <div style={S.sheetHandle} />
         {title && <div style={S.sheetTitle}>{title}</div>}
         {children}
@@ -272,31 +281,26 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
   const updateAttr = (i, k, v) => setAttrs(a => a.map((x,j) => j===i ? {...x,[k]:v} : x));
   const removeAttr = (i) => setAttrs(a => a.filter((_,j) => j!==i));
 
-  // Load attr templates for selected category (including parent scene as shared templates)
-  const catAttrTpls = useMemo(() => {
-    if (!form.categoryId) return [];
+  // Get attr templates for category (real-time, no cache)
+  const getCatAttrTpls = (categoryId) => {
+    if (!categoryId) return [];
     const allTpls = loadAttrTemplates();
-    // Find the selected category
-    const selectedCat = categories.find(c => c.id === form.categoryId);
-    // Get own category templates
-    const ownTpls = allTpls[form.categoryId] || [];
-    // If it's a sub-category, also include parent scene templates (shared)
+    const selectedCat = categories.find(c => c.id === categoryId);
+    const ownTpls = allTpls[categoryId] || [];
     const parentTpls = (selectedCat && selectedCat.parentId)
       ? (allTpls[selectedCat.parentId] || []).map(t => ({ ...t, _fromScene: true }))
       : [];
-    // Merge: scene templates first, then own, deduplicate by key (own wins)
     const ownKeys = new Set(ownTpls.map(t => t.key.trim()));
-    const merged = [
+    return [
       ...parentTpls.filter(t => !ownKeys.has(t.key.trim())),
       ...ownTpls,
     ];
-    return merged;
-  }, [form.categoryId, categories]);
+  };
 
   const applyAttrTemplates = () => {
     const catId = form.categoryId;
     if (!catId) { alert('请先选择分类'); return; }
-    const tplList = catAttrTpls;
+    const tplList = getCatAttrTpls(catId);
     if (tplList.length === 0) { alert('当前分类没有属性模板，请先在设置中添加'); return; }
     setAttrs(prev => {
       const existingKeys = prev.map(a => a.key.trim());
@@ -417,16 +421,25 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
             <input style={{ ...inputStyle, flex:'2' }} type="number" min="0" max="9999" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
             <input style={{ ...inputStyle, flex:'1.2', minWidth:0 }} placeholder="单位" value={form.unit||''} onChange={e => set('unit', e.target.value)} />
           </div>
+          {/* 单位快捷选择 */}
           {(() => {
-            const units = loadUnits();
-            const filtered = units.filter(u => !form.unit || u.includes(form.unit));
-            return filtered.length > 0 && form.unit && !units.some(u => u === form.unit) ? (
-              <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'4px' }}>
-                {filtered.slice(0,10).map(u => (
-                  <button key={u} type="button" onMouseDown={e=>{e.preventDefault();set('unit',u);}} style={{ padding:'3px 8px', borderRadius:'10px', border:'1px solid #007AFF', background:'#fff', color:'#007AFF', fontSize:'12px', cursor:'pointer' }}>{u}</button>
+            const allUnits = loadUnits();
+            const keyword = (form.unit || '').trim();
+            const display = keyword
+              ? allUnits.filter(u => u.includes(keyword))
+              : allUnits;
+            if (display.length === 0) return null;
+            return (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'6px' }}>
+                {display.map(u => (
+                  <button key={u} type="button"
+                    onMouseDown={e => { e.preventDefault(); set('unit', u); }}
+                    style={{ padding:'4px 10px', borderRadius:'12px', border:'1px solid ' + (form.unit===u ? '#007AFF' : '#C7C7CC'), background: form.unit===u ? '#007AFF' : '#fff', color: form.unit===u ? '#fff' : '#3C3C43', fontSize:'13px', cursor:'pointer', fontWeight: form.unit===u ? '600' : '400' }}>
+                    {u}
+                  </button>
                 ))}
               </div>
-            ) : null;
+            );
           })()}
         </div>
         <div>
@@ -469,7 +482,7 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
           </div>
         </div>
         {attrs.map((a, i) => {
-          const tplForKey = catAttrTpls.find(t => t.key.trim() === a.key.trim());
+          const tplForKey = getCatAttrTpls(form.categoryId).find(t => t.key.trim() === a.key.trim());
           const opts = tplForKey ? (tplForKey.options || []) : [];
           return (
           <div key={a.id} style={{ marginBottom:'8px' }}>
@@ -1170,8 +1183,8 @@ function ItemsTab({ store, dispatch, sortByExternal, onSortByChange }) {
   const [filterAttrValue, setFilterAttrValue] = useState('');
   const [filterExpiryDays, setFilterExpiryDays] = useState('');
 
-  const scenes = store.categories.filter(c => !c.parentId);
-  const subs = store.categories.filter(c => c.parentId);
+  const scenes = store.categories.filter(c => !c.parentId).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+  const subs = store.categories.filter(c => c.parentId).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
   const hasAdvFilter = filterStatus !== 'in' || filterRating > 0 || filterPriceMin !== '' || filterPriceMax !== '' || filterExpiry !== 'all' || filterBrand !== '' || filterAttrKey !== '' || filterExpiryDays !== '';
   const setScene = (id) => { setFilterCat(id); setFilterSubCat(''); };
   const effectiveCatFilter = filterSubCat || filterCat;
@@ -1977,6 +1990,16 @@ function reducer(store, action) {
         items: store.items.map(i => i.id===item.id ? { ...i, quantity: newQty, updatedAt: n } : i),
         stockRecords: [...store.stockRecords, record],
       };
+    }
+    case 'REORDER_CATS': {
+      // action.ids: new order array (categoryId[])
+      const idOrder = action.ids;
+      const newCats = [...store.categories];
+      idOrder.forEach((id, idx) => {
+        const cat = newCats.find(c => c.id === id);
+        if (cat) cat.sortOrder = idx;
+      });
+      return { ...store, categories: newCats };
     }
     case 'REPLACE_STORE':
       return action.payload;
