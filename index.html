@@ -2032,6 +2032,18 @@ function App() {
   }, [store]);
 
   useEffect(() => {
+    // Debug: show actual URL when launched
+    const loc = window.location.href;
+    const isStandalone = window.navigator.standalone;
+    if (isStandalone) {
+      console.log('PWA standalone mode, URL:', loc);
+      // Show alert once to debug URL issue
+      const debugShown = sessionStorage.getItem('_debug_shown');
+      if (!debugShown) {
+        sessionStorage.setItem('_debug_shown', '1');
+        setTimeout(() => alert('PWA启动URL: ' + loc + '\n数据key: stuffbox_data\n有数据: ' + !!localStorage.getItem('stuffbox_data')), 1000);
+      }
+    }
     if ('serviceWorker' in navigator) {
       // Unregister any old service workers first, then register new one
       navigator.serviceWorker.getRegistrations().then(regs => {
