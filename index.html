@@ -238,7 +238,7 @@ function SwipeRow({ children, onSwipeAction, actionLabel='记录一次', actionC
 function ItemForm({ initial, categories, allItems, onSave, onClose }) {
   const [form, setForm] = useState(() => ({
     name: '', brand: '', notes: '', iconName: '📦', categoryId: '',
-    purchasePrice: '', purchaseDate: '', quantity: 1, rating: 0,
+    purchasePrice: '', purchaseDate: '', quantity: 1, unit: '', rating: 0,
     status: 0, expirationDate: '', notifyDaysBefore: 7,
     parentItemId: null,
     ...initial,
@@ -371,7 +371,13 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' }}>
         <div>
           <div style={S.label}>数量</div>
-          <input style={inputStyle} type="number" min="0" max="9999" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
+          <div style={{ display:'flex', gap:'6px' }}>
+            <input style={{ ...inputStyle, flex:'2' }} type="number" min="0" max="9999" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
+            <input style={{ ...inputStyle, flex:'1.2', minWidth:0 }} list="unit-list" placeholder="单位" value={form.unit||''} onChange={e => set('unit', e.target.value)} />
+          </div>
+          <datalist id="unit-list">
+            {['个','件','包','盒','瓶','罐','袋','套','双','对','本','册','张','片','块','颗','粒','支','管','条','根','卷','箱','桶','升','毫升','克','千克','米','厘米'].map(u => <option key={u} value={u} />)}
+          </datalist>
         </div>
         <div>
           <div style={S.label}>状态</div>
@@ -599,7 +605,7 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
         <span style={{ fontSize:'15px' }}>数量</span>
         <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
           <button onClick={() => onUpdateQty(item, -1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#E5E5EA', border:'none', fontSize:'20px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>−</button>
-          <span style={{ fontSize:'20px', fontWeight:'600', minWidth:'32px', textAlign:'center' }}>{item.quantity||1}</span>
+          <span style={{ fontSize:'20px', fontWeight:'600', minWidth:'32px', textAlign:'center' }}>{item.quantity||0}{item.unit ? <span style={{ fontSize:'13px', color:'#8E8E93', marginLeft:'2px' }}>{item.unit}</span> : ''}</span>
           <button onClick={() => onUpdateQty(item, 1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#007AFF', border:'none', fontSize:'20px', color:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>+</button>
         </div>
         <button style={S.btnSm()} onClick={() => onRecordUse(item)}>记录一次</button>
@@ -743,7 +749,7 @@ function ItemRow({ item, categories, allItems, onTap, onRecordUse, onUpdateQty, 
       {/* 右侧快捷操作：增减数量 + 记录使用 */}
       <div style={{ display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
         <button onClick={e=>{e.stopPropagation();onUpdateQty(item,-1);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#FF9500',border:'none',color:'#fff',fontSize:'16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>−</button>
-        <span style={{ fontSize:'13px',color:'#444',minWidth:'18px',textAlign:'center',fontWeight:'500' }}>{item.quantity||0}</span>
+        <span style={{ fontSize:'13px',color:'#444',minWidth:'18px',textAlign:'center',fontWeight:'500' }}>{item.quantity||0}{item.unit ? <span style={{fontSize:'11px',color:'#8E8E93',marginLeft:'1px'}}>{item.unit}</span> : ''}</span>
         <button onClick={e=>{e.stopPropagation();onUpdateQty(item,1);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#34C759',border:'none',color:'#fff',fontSize:'16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>+</button>
         <button onClick={e=>{e.stopPropagation();onRecordUse(item);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#007AFF',border:'none',color:'#fff',fontSize:'14px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }} title="记录使用">✓</button>
       </div>
@@ -1094,11 +1100,12 @@ function HomeTab({ store, dispatch, onNavigateToItems }) {
 }
 
 // ─── ITEMS TAB ────────────────────────────────────────────────────────────────
-function ItemsTab({ store, dispatch }) {
+function ItemsTab({ store, dispatch, sortByExternal, onSortByChange }) {
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('');
   const [filterSubCat, setFilterSubCat] = useState('');
-  const [sortBy, setSortBy] = useState('createdAt');
+  const sortBy = sortByExternal || 'createdAt';
+  const setSortBy = onSortByChange || (() => {});
   const [showSort, setShowSort] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showItemForm, setShowItemForm] = useState(false);
@@ -1357,72 +1364,141 @@ function ExpiryTab({ store, dispatch }) {
   const [detailItem, setDetailItem] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [showItemForm, setShowItemForm] = useState(false);
+  const [expiryFilter, setExpiryFilter] = useState('all'); // all | expired | soon7 | soon30
 
   const itemsWithExpiry = store.items.filter(i => i.expirationDate && !i.parentItemId)
     .map(i => ({ ...i, _status: expiryStatus(i.expirationDate) }))
     .sort((a,b) => new Date(a.expirationDate) - new Date(b.expirationDate));
 
-  const groups = [
+  const allGroups = [
     { key:0, label:'已过期', color:'#FF3B30', items: itemsWithExpiry.filter(i=>i._status.level===0) },
-    { key:1, label:'即将到期 (7天内)', color:'#FF9500', items: itemsWithExpiry.filter(i=>i._status.level===1) },
-    { key:2, label:'30天内', color:'#FFCC00', items: itemsWithExpiry.filter(i=>i._status.level===2) },
-    { key:3, label:'正常', color:'#34C759', items: itemsWithExpiry.filter(i=>i._status.level===3) },
-  ].filter(g => g.items.length > 0);
+    { key:1, label:'7天内到期', color:'#FF9500', items: itemsWithExpiry.filter(i=>i._status.level===1) },
+    { key:2, label:'30天内到期', color:'#FFCC00', items: itemsWithExpiry.filter(i=>i._status.level===2) },
+    { key:3, label:'日期正常', color:'#34C759', items: itemsWithExpiry.filter(i=>i._status.level===3) },
+  ];
+  const filterMap = { all: null, expired: 0, soon7: 1, soon30: 2 };
+  const groups = (expiryFilter === 'all' ? allGroups : allGroups.filter(g => g.key === filterMap[expiryFilter]))
+    .filter(g => g.items.length > 0);
 
   const handleSaveItem = (formData, attrs) => {
     dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
     setShowItemForm(false); setEditingItem(null);
   };
-
   const handleRecordUse = (item) => dispatch({ type: 'RECORD_USE', payload: item });
   const handleUpdateQty = (item, delta) => dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
   const handleOutStock = (item) => {
     dispatch({ type: 'UPDATE_ITEM', payload: { ...item, status: 1, updatedAt: now() }, attrs: store.itemAttributes.filter(a=>a.itemId===item.id), accessories: store.items.filter(i=>i.parentItemId===item.id) });
   };
+  const handleBatchOutStock = (items) => {
+    if (!window.confirm(`确认将 ${items.length} 件已过期物品全部出库？`)) return;
+    items.forEach(item => handleOutStock(item));
+  };
+
+  const expiredCount = allGroups[0].items.length;
+  const soon7Count = allGroups[1].items.length;
+  const soon30Count = allGroups[2].items.length;
 
   return (
     <div style={S.screen}>
       <div style={{ padding:'16px 16px 0' }}>
+        {̶/* 统计汇总卡片 */}
+        {itemsWithExpiry.length > 0 && (
+          <div style={{ ...S.card, padding:'12px 16px', marginBottom:'16px', display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', textAlign:'center' }}>
+            {[
+              { label:'已过期', count: expiredCount, color:'#FF3B30' },
+              { label:'7天内', count: soon7Count, color:'#FF9500' },
+              { label:'30天内', count: soon30Count, color:'#FFCC00' },
+              { label:'全部有效期', count: itemsWithExpiry.length, color:'#34C759' },
+            ].map(s => (
+              <div key={s.label}>
+                <div style={{ fontSize:'20px', fontWeight:'700', color: s.count>0 ? s.color : '#8E8E93' }}>{s.count}</div>
+                <div style={{ fontSize:'11px', color:'#8E8E93', marginTop:'2px' }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {̶/* 筛选 chips */}
+        {itemsWithExpiry.length > 0 && (
+          <div style={{ display:'flex', gap:'8px', marginBottom:'12px', overflowX:'auto', paddingBottom:'2px' }}>
+            {[['all','全部'],['expired','已过期'],['soon7','7天内'],['soon30','30天内']].map(([v,l]) => (
+              <button key={v} onClick={() => setExpiryFilter(v)}
+                style={{ padding:'6px 14px', borderRadius:'16px', border:'none', whiteSpace:'nowrap',
+                  background: expiryFilter===v ? '#007AFF':'#E5E5EA',
+                  color: expiryFilter===v ? '#fff':'#333',
+                  fontSize:'13px', cursor:'pointer', fontWeight: expiryFilter===v ? '600':'400' }}>{l}</button>
+            ))}
+          </div>
+        )}
+
         {itemsWithExpiry.length === 0 ? (
           <div style={{ ...S.card, padding:'48px 16px', textAlign:'center', color:'#8E8E93' }}>
             <div style={{ fontSize:'48px', marginBottom:'12px' }}>⏰</div>
             <div style={{ fontSize:'16px' }}>没有设置有效期的物品</div>
             <div style={{ fontSize:'13px', marginTop:'6px' }}>在添加/编辑物品时设置有效期</div>
           </div>
+        ) : groups.length === 0 ? (
+          <div style={{ ...S.card, padding:'32px 16px', textAlign:'center', color:'#8E8E93' }}>
+            <div style={{ fontSize:'16px' }}>该分类暂无物品</div>
+          </div>
         ) : (
           groups.map(group => (
             <div key={group.key} style={{ marginBottom:'16px' }}>
               <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
                 <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:group.color }} />
-                <div style={{ fontSize:'14px', fontWeight:'600', color:'#6C6C70' }}>{group.label}</div>
+                <div style={{ fontSize:'14px', fontWeight:'600', color:'#6C6C70', flex:1 }}>{group.label}</div>
                 <div style={{ fontSize:'13px', color:'#8E8E93' }}>{group.items.length} 件</div>
+                {group.key === 0 && group.items.length > 1 && (
+                  <button onClick={() => handleBatchOutStock(group.items)}
+                    style={{ padding:'4px 10px', borderRadius:'8px', background:'#FF3B30', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer' }}>
+                    全部出库
+                  </button>
+                )}
               </div>
               <div style={S.card}>
                 {group.items.map((item, i) => {
                   const diff = daysBetween(today(), item.expirationDate);
                   const cat = store.categories.find(c => c.id === item.categoryId);
                   return (
-                    <SwipeRow key={item.id} onSwipeAction={() => handleRecordUse(item)}>
-                      <div style={{ ...S.row, ...(i===group.items.length-1 ? S.rowLast : {}) }} onClick={() => setDetailItem(item)}>
+                    <div key={item.id} style={{ ...S.row, ...(i===group.items.length-1 ? S.rowLast : {}), flexDirection:'column', alignItems:'stretch', padding:'12px 14px', gap:0 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:'10px' }} onClick={() => setDetailItem(item)}>
                         <div style={S.emojiBox(item.colorHex||cat?.colorHex||'#007AFF')}>{item.iconName||'📦'}</div>
                         <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:'15px', fontWeight:'500' }}>{item.name}</div>
-                          <div style={{ fontSize:'13px', color:'#8E8E93' }}>有效期：{fmt(item.expirationDate)}</div>
+                          <div style={{ fontSize:'15px', fontWeight:'500', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
+                          <div style={{ fontSize:'12px', color:'#8E8E93', marginTop:'2px', display:'flex', gap:'6px', flexWrap:'wrap' }}>
+                            {cat && <span>{cat.iconName} {cat.name}</span>}
+                            {item.brand && <span>· {item.brand}</span>}
+                            {item.purchasePrice ? <span>· ¥{Number(item.purchasePrice).toFixed(2)}</span> : null}
+                          </div>
+                          <div style={{ fontSize:'12px', marginTop:'3px', display:'flex', gap:'8px', alignItems:'center' }}>
+                            <span style={{ color:'#6C6C70' }}>有效期：{fmt(item.expirationDate)}</span>
+                            {diff < 0
+                              ? <span style={{ ...S.tag('#FF3B30'), fontSize:'11px' }}>已过期 {-diff}天</span>
+                              : diff === 0
+                              ? <span style={{ ...S.tag('#FF3B30'), fontSize:'11px' }}>今天到期</span>
+                              : <span style={{ ...S.tag(group.color), fontSize:'11px' }}>剩余 {diff}天</span>
+                            }
+                          </div>
                         </div>
-                        {group.key === 0 && (
-                          <button onClick={e=>{e.stopPropagation();handleOutStock(item);}} style={{ padding:'4px 10px', borderRadius:'8px', background:'#FF3B30', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer', flexShrink:0, marginRight:'4px' }}>出库</button>
-                        )}
-                        <div style={{ flexShrink:0, textAlign:'right' }}>
-                          {diff < 0
-                            ? <span style={S.tag('#FF3B30')}>已过期 {-diff}天</span>
-                            : diff === 0
-                            ? <span style={S.tag('#FF3B30')}>今天到期</span>
-                            : <span style={S.tag(group.color)}>剩余 {diff}天</span>
-                          }
-                        </div>
-                        <span style={S.chevron}>›</span>
                       </div>
-                    </SwipeRow>
+                      {̶/* 操作按鈕行 */}
+                      <div style={{ display:'flex', gap:'8px', marginTop:'10px', paddingLeft:'52px' }}>
+                        {group.key === 0 ? (
+                          <button onClick={e=>{e.stopPropagation();handleOutStock(item);}}
+                            style={{ padding:'5px 14px', borderRadius:'8px', background:'#FF3B30', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer' }}>
+                            出库
+                          </button>
+                        ) : (
+                          <button onClick={e=>{e.stopPropagation();handleRecordUse(item);}}
+                            style={{ padding:'5px 14px', borderRadius:'8px', background:'#007AFF', color:'#fff', fontSize:'12px', border:'none', cursor:'pointer' }}>
+                            ✓ 记录使用
+                          </button>
+                        )}
+                        <button onClick={e=>{e.stopPropagation();setEditingItem(item);setShowItemForm(true);}}
+                          style={{ padding:'5px 14px', borderRadius:'8px', background:'#E5E5EA', color:'#333', fontSize:'12px', border:'none', cursor:'pointer' }}>
+                          编辑有效期
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -1442,7 +1518,7 @@ function ExpiryTab({ store, dispatch }) {
 
       <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title="编辑物品">
         {editingItem && <ItemForm initial={{ ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) }}
-          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />}
+          categories={store.categories} allItems={store.items} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />}
       </Sheet>
     </div>
   );
@@ -1808,6 +1884,14 @@ function reducer(store, action) {
 function App() {
   const [tab, setTab] = useState(0);
   const [store, dispatch_] = React.useReducer(reducer, null, loadStore);
+  const [itemsSortBy, setItemsSortBy] = useState(() => {
+    try { return localStorage.getItem('stuffbox_sort') || 'createdAt'; } catch { return 'createdAt'; }
+  });
+
+  const handleSetItemsSortBy = (v) => {
+    setItemsSortBy(v);
+    try { localStorage.setItem('stuffbox_sort', v); } catch {}
+  };
 
   const dispatch = useCallback((action) => {
     dispatch_(action);
@@ -1839,7 +1923,7 @@ function App() {
   return (
     <div style={S.app}>
       {tab === 0 && <HomeTab store={store} dispatch={dispatch} />}
-      {tab === 1 && <ItemsTab store={store} dispatch={dispatch} />}
+      {tab === 1 && <ItemsTab store={store} dispatch={dispatch} sortByExternal={itemsSortBy} onSortByChange={handleSetItemsSortBy} />}
       {tab === 2 && <ExpiryTab store={store} dispatch={dispatch} />}
       {tab === 3 && <SettingsTab store={store} dispatch={dispatch} />}
 
