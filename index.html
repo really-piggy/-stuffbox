@@ -46,6 +46,9 @@ function expiryStatus(expirationDate) {
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'stuffbox_data';
+const BRANDS_KEY = 'stuffbox_brands';
+const ATTR_TEMPLATES_KEY = 'stuffbox_attr_templates';
+
 const emptyStore = () => ({ categories: [], items: [], usageRecords: [], stockRecords: [], itemAttributes: [] });
 
 function loadStore() {
@@ -58,6 +61,20 @@ function loadStore() {
 
 function saveStore(store) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+
+function loadBrands() {
+  try { return JSON.parse(localStorage.getItem(BRANDS_KEY) || '[]'); } catch { return []; }
+}
+function saveBrands(brands) {
+  localStorage.setItem(BRANDS_KEY, JSON.stringify(brands));
+}
+
+function loadAttrTemplates() {
+  try { return JSON.parse(localStorage.getItem(ATTR_TEMPLATES_KEY) || '{}'); } catch { return {}; }
+}
+function saveAttrTemplates(tpls) {
+  localStorage.setItem(ATTR_TEMPLATES_KEY, JSON.stringify(tpls));
 }
 
 // ─── Emoji Picker Data ────────────────────────────────────────────────────────
@@ -75,7 +92,7 @@ const COLORS = ['#007AFF','#34C759','#FF9500','#FF2D55','#5856D6','#00C7BE','#FF
 // ─── Global Styles ────────────────────────────────────────────────────────────
 const S = {
   app: { display:'flex', flexDirection:'column', height:'100%', background:'#F2F2F7' },
-  screen: { flex:1, overflowY:'auto', paddingBottom:'80px' },
+  screen: { flex:1, overflowY:'auto', paddingBottom:'84px' },
   tabBar: { position:'fixed', bottom:0, left:0, right:0, height:'80px', background:'rgba(255,255,255,0.92)', backdropFilter:'blur(20px)', borderTop:'1px solid rgba(0,0,0,0.1)', display:'flex', zIndex:100, paddingBottom:'env(safe-area-inset-bottom)' },
   tabItem: (active) => ({ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'2px', cursor:'pointer', color: active ? '#007AFF' : '#8E8E93', background:'none', border:'none', fontSize:'10px', paddingTop:'6px' }),
   card: { background:'#fff', borderRadius:'16px', boxShadow:'0 1px 3px rgba(0,0,0,0.08)', overflow:'hidden' },
@@ -195,7 +212,6 @@ function SwipeRow({ children, onSwipeAction, actionLabel='记录一次', actionC
     }
     if (!isHoriz.current) return;
     e.preventDefault();
-    const newOff = Math.max(-ACTION_W, Math.min(0, offset + dx - (offset > -ACTION_W/2 ? 0 : 0)));
     const raw = offset + dx;
     setOffset(Math.max(-ACTION_W, Math.min(0, raw)));
   };
@@ -219,7 +235,7 @@ function SwipeRow({ children, onSwipeAction, actionLabel='记录一次', actionC
 }
 
 // ─── Item Form ────────────────────────────────────────────────────────────────
-function ItemForm({ initial, categories, onSave, onClose }) {
+function ItemForm({ initial, categories, allItems, onSave, onClose }) {
   const [form, setForm] = useState(() => ({
     name: '', brand: '', notes: '', iconName: '📦', categoryId: '',
     purchasePrice: '', purchaseDate: '', quantity: 1, rating: 0,
@@ -228,6 +244,10 @@ function ItemForm({ initial, categories, onSave, onClose }) {
     ...initial,
   }));
   const [attrs, setAttrs] = useState(() => initial?._attrs || []);
+  const [accessories, setAccessories] = useState(() => initial?._accessories || []);
+  const [showAccForm, setShowAccForm] = useState(false);
+  const [accForm, setAccForm] = useState({ name:'', brand:'', iconName:'📦', purchasePrice:'', purchaseDate:'' });
+  const [showTplPicker, setShowTplPicker] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const allCats = categories;
@@ -238,9 +258,37 @@ function ItemForm({ initial, categories, onSave, onClose }) {
   const updateAttr = (i, k, v) => setAttrs(a => a.map((x,j) => j===i ? {...x,[k]:v} : x));
   const removeAttr = (i) => setAttrs(a => a.filter((_,j) => j!==i));
 
+  // Load attr templates for selected category
+  const applyAttrTemplates = () => {
+    const catId = form.categoryId;
+    if (!catId) { alert('请先选择分类'); return; }
+    const allTpls = loadAttrTemplates();
+    const tplList = allTpls[catId] || [];
+    if (tplList.length === 0) { alert('当前分类没有属性模板，请先在设置中添加'); return; }
+    const existingKeys = attrs.map(a => a.key);
+    const newAttrs = tplList
+      .filter(t => !existingKeys.includes(t.key))
+      .map((t, i) => ({ id: genId(), key: t.key, value: '', sortOrder: attrs.length + i }));
+    if (newAttrs.length === 0) { alert('所有模板属性已存在'); return; }
+    setAttrs(a => [...a, ...newAttrs]);
+  };
+
+  // Calculate totals
+  const mainPrice = Number(form.purchasePrice) || 0;
+  const accTotal = accessories.reduce((s, a) => s + (Number(a.purchasePrice) || 0), 0);
+  const grandTotal = mainPrice + accTotal;
+
+  const saveAcc = () => {
+    if (!accForm.name.trim()) return alert('请输入附加物名称');
+    setAccessories(a => [...a, { id: genId(), ...accForm, name: accForm.name.trim(), quantity:1, status:0, timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt: now(), updatedAt: now() }]);
+    setAccForm({ name:'', brand:'', iconName:'📦', purchasePrice:'', purchaseDate:'' });
+    setShowAccForm(false);
+  };
+  const removeAcc = (id) => setAccessories(a => a.filter(x => x.id !== id));
+
   const handleSave = () => {
     if (!form.name.trim()) return alert('请输入物品名称');
-    onSave({ ...form, name: form.name.trim(), quantity: Math.max(1, Number(form.quantity)||1) }, attrs);
+    onSave({ ...form, name: form.name.trim(), quantity: Math.max(1, Number(form.quantity)||1) }, attrs, accessories);
   };
 
   const inputStyle = { ...S.input };
@@ -276,9 +324,6 @@ function ItemForm({ initial, categories, onSave, onClose }) {
                 <option key={sub.id} value={sub.id}>{sub.iconName} {sub.name}</option>
               ))}
             </optgroup>
-          ))}
-          {subs.filter(s => !scenes.find(sc => sc.id === s.parentId)).map(sub => (
-            <option key={sub.id} value={sub.id}>{sub.iconName} {sub.name}</option>
           ))}
         </select>
       </div>
@@ -330,10 +375,13 @@ function ItemForm({ initial, categories, onSave, onClose }) {
       </div>
 
       {/* 自定义属性 */}
-      <div style={{ marginBottom:'14px' }}>
+      <div style={{ marginBottom:'16px' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
-          <div style={S.label}>自定义属性</div>
-          <button style={S.btnSm()} onClick={addAttr}>+ 添加</button>
+          <div style={{ fontSize:'14px', fontWeight:'600', color:'#1C1C1E' }}>自定义属性</div>
+          <div style={{ display:'flex', gap:'6px' }}>
+            <button style={{ ...S.btnSm('#34C759'), fontSize:'12px', padding:'6px 10px' }} onClick={applyAttrTemplates}>从模板添加</button>
+            <button style={S.btnSm()} onClick={addAttr}>+ 添加</button>
+          </div>
         </div>
         {attrs.map((a, i) => (
           <div key={a.id} style={{ display:'flex', gap:'8px', marginBottom:'8px' }}>
@@ -343,6 +391,73 @@ function ItemForm({ initial, categories, onSave, onClose }) {
           </div>
         ))}
       </div>
+
+      {/* 附加物 */}
+      {!initial?.parentItemId && (
+        <div style={{ marginBottom:'16px' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+            <div style={{ fontSize:'14px', fontWeight:'600', color:'#1C1C1E' }}>附加物 ({accessories.length})</div>
+            <button style={S.btnSm()} onClick={() => setShowAccForm(true)}>+ 添加附加物</button>
+          </div>
+          {accessories.length > 0 && (
+            <div style={{ ...S.card, marginBottom:'8px' }}>
+              {accessories.map((acc, i) => (
+                <div key={acc.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 14px', borderBottom: i<accessories.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+                  <div style={{ fontSize:'22px' }}>{acc.iconName||'📦'}</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:'14px', fontWeight:'500' }}>{acc.name}</div>
+                    {acc.brand && <div style={{ fontSize:'12px', color:'#8E8E93' }}>{acc.brand}</div>}
+                  </div>
+                  {acc.purchasePrice ? <span style={{ fontSize:'13px', color:'#6C6C70' }}>¥{Number(acc.purchasePrice).toFixed(2)}</span> : null}
+                  <button onClick={() => removeAcc(acc.id)} style={{ color:'#FF3B30', fontSize:'18px', border:'none', background:'none', cursor:'pointer', padding:'0 4px' }}>×</button>
+                </div>
+              ))}
+              {/* 附加物小计 */}
+              <div style={{ padding:'10px 14px', borderTop:'1px solid rgba(0,0,0,0.08)', background:'#F9F9FB' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px', color:'#6C6C70', marginBottom:'4px' }}>
+                  <span>主物品</span>
+                  <span>{mainPrice > 0 ? `¥${mainPrice.toFixed(2)}` : '—'}</span>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px', color:'#6C6C70', marginBottom:'4px' }}>
+                  <span>附加物小计 ({accessories.length}件)</span>
+                  <span>{accTotal > 0 ? `¥${accTotal.toFixed(2)}` : '—'}</span>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:'14px', fontWeight:'700', color:'#1C1C1E', paddingTop:'4px', borderTop:'1px solid rgba(0,0,0,0.06)' }}>
+                  <span>总价</span>
+                  <span style={{ color:'#007AFF' }}>{grandTotal > 0 ? `¥${grandTotal.toFixed(2)}` : '—'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {showAccForm && (
+            <div style={{ background:'#F9F9F9', borderRadius:'12px', padding:'14px', border:'1px solid #E5E5EA', marginBottom:'8px' }}>
+              <div style={{ fontSize:'13px', fontWeight:'600', marginBottom:'10px', color:'#6C6C70' }}>新附加物</div>
+              <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'8px' }}>
+                <EmojiPicker value={accForm.iconName} onChange={v => setAccForm(f=>({...f, iconName:v}))} />
+                <input style={{ ...inputStyle, flex:1 }} placeholder="附加物名称 *" value={accForm.name} onChange={e => setAccForm(f=>({...f, name:e.target.value}))} />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px' }}>
+                <input style={inputStyle} placeholder="品牌（可选）" value={accForm.brand} onChange={e => setAccForm(f=>({...f, brand:e.target.value}))} />
+                <input style={inputStyle} type="number" placeholder="价格" value={accForm.purchasePrice} onChange={e => setAccForm(f=>({...f, purchasePrice:e.target.value}))} />
+              </div>
+              <input style={{ ...inputStyle, marginBottom:'8px' }} type="date" value={accForm.purchaseDate} onChange={e => setAccForm(f=>({...f, purchaseDate:e.target.value}))} />
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button style={{ ...S.btn(), flex:1, padding:'10px' }} onClick={saveAcc}>确认添加</button>
+                <button style={{ ...S.btn('#8E8E93'), flex:1, padding:'10px' }} onClick={() => setShowAccForm(false)}>取消</button>
+              </div>
+            </div>
+          )}
+          {/* 总价汇总（无附加物时也显示） */}
+          {accessories.length === 0 && mainPrice > 0 && (
+            <div style={{ background:'#F0F7FF', borderRadius:'10px', padding:'10px 14px', border:'1px solid #D0E8FF' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', fontSize:'14px', fontWeight:'600', color:'#007AFF' }}>
+                <span>总价（主物品）</span>
+                <span>¥{mainPrice.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <button style={S.btn()} onClick={handleSave}>保存</button>
       <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={onClose}>取消</button>
@@ -389,12 +504,15 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
   const cat = store.categories.find(c => c.id === item.categoryId);
   const scene = cat?.parentId ? store.categories.find(c => c.id === cat.parentId) : cat;
   const attrs = store.itemAttributes.filter(a => a.itemId === item.id).sort((a,b)=>a.sortOrder-b.sortOrder);
-  const attachments = store.items.filter(i => i.parentItemId === item.id);
+  // Accessories (saved as child items)
+  const attachmentItems = store.items.filter(i => i.parentItemId === item.id);
   const stockRecords = store.stockRecords.filter(r => r.itemId === item.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
   const usageRecords = store.usageRecords.filter(r => r.itemId === item.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
   const expStatus = expiryStatus(item.expirationDate);
 
   const price = Number(item.purchasePrice)||0;
+  const accTotal = attachmentItems.reduce((s, a) => s + (Number(a.purchasePrice) || 0), 0);
+  const totalPrice = price + accTotal;
   const cpw = item.timesUsed > 0 && price > 0 ? (price / item.timesUsed).toFixed(2) : null;
   const daysUsed = item.firstUsedAt ? Math.max(1, daysBetween(item.firstUsedAt, today())+1) : null;
   const cpd = daysUsed && price > 0 ? (price / daysUsed).toFixed(2) : null;
@@ -405,8 +523,8 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
       <div style={S.card}>{children}</div>
     </div>
   );
-  const InfoRow = ({ label, value }) => (
-    <div style={{ display:'flex', justifyContent:'space-between', padding:'11px 16px', borderBottom:'1px solid rgba(0,0,0,0.06)', alignItems:'center' }}>
+  const InfoRow = ({ label, value, last }) => (
+    <div style={{ display:'flex', justifyContent:'space-between', padding:'11px 16px', borderBottom: last ? 'none' : '1px solid rgba(0,0,0,0.06)', alignItems:'center' }}>
       <span style={{ fontSize:'15px', color:'#6C6C70' }}>{label}</span>
       <span style={{ fontSize:'15px', fontWeight:'500' }}>{value || '—'}</span>
     </div>
@@ -456,57 +574,61 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
 
       <Section title="财务">
         <InfoRow label="购入价格" value={fmtPrice(item.purchasePrice)} />
+        {attachmentItems.length > 0 && (
+          <InfoRow label="附加物合计" value={accTotal > 0 ? `¥${accTotal.toFixed(2)}` : '—'} />
+        )}
+        <InfoRow label={attachmentItems.length > 0 ? '总价（含附件）' : '总价'} value={totalPrice > 0 ? `¥${totalPrice.toFixed(2)}` : '—'} />
         <InfoRow label="每次成本 CPW" value={cpw ? `¥${cpw}` : '—'} />
-        <div style={{ borderBottom:'none', display:'flex', justifyContent:'space-between', padding:'11px 16px', alignItems:'center' }}>
-          <span style={{ fontSize:'15px', color:'#6C6C70' }}>每日成本 CPD</span>
-          <span style={{ fontSize:'15px', fontWeight:'500' }}>{cpd ? `¥${cpd}` : '—'}</span>
-        </div>
+        <InfoRow label="每日成本 CPD" value={cpd ? `¥${cpd}` : '—'} last />
       </Section>
 
       <Section title="使用统计">
         <InfoRow label="使用次数" value={`${item.timesUsed||0} 次`} />
         <InfoRow label="首次使用" value={fmt(item.firstUsedAt)} />
         <InfoRow label="最近使用" value={fmt(item.lastUsedAt)} />
-        <div style={{ borderBottom:'none', display:'flex', justifyContent:'space-between', padding:'11px 16px', alignItems:'center' }}>
-          <span style={{ fontSize:'15px', color:'#6C6C70' }}>使用天数</span>
-          <span style={{ fontSize:'15px', fontWeight:'500' }}>{daysUsed ? `${daysUsed} 天` : '—'}</span>
-        </div>
+        <InfoRow label="使用天数" value={daysUsed ? `${daysUsed} 天` : '—'} last />
       </Section>
 
       {attrs.length > 0 && (
         <Section title="自定义属性">
           {attrs.map((a, i) => (
-            <div key={a.id} style={{ ...(i===attrs.length-1 ? S.rowLast : {}), display:'flex', justifyContent:'space-between', padding:'11px 16px', borderBottom:'1px solid rgba(0,0,0,0.06)' }}>
-              <span style={{ fontSize:'15px', color:'#6C6C70' }}>{a.key}</span>
-              <span style={{ fontSize:'15px', fontWeight:'500' }}>{a.value}</span>
-            </div>
+            <InfoRow key={a.id} label={a.key} value={a.value} last={i===attrs.length-1} />
           ))}
         </Section>
       )}
 
-      {attachments.length > 0 && (
-        <Section title={`附加物 (${attachments.length})`}>
-          {attachments.map((att, i) => (
-            <div key={att.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 16px', borderBottom: i<attachments.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+      {attachmentItems.length > 0 && (
+        <Section title={`附加物 (${attachmentItems.length})`}>
+          {attachmentItems.map((att, i) => (
+            <div key={att.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 16px', borderBottom: i<attachmentItems.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
               <div style={S.emojiBox(att.colorHex||'#007AFF')}>{att.iconName||'📦'}</div>
-              <div>
+              <div style={{ flex:1 }}>
                 <div style={{ fontSize:'15px' }}>{att.name}</div>
                 {att.brand && <div style={{ fontSize:'13px', color:'#8E8E93' }}>{att.brand}</div>}
               </div>
-              {att.purchasePrice && <span style={{ marginLeft:'auto', fontSize:'14px', color:'#6C6C70' }}>{fmtPrice(att.purchasePrice)}</span>}
+              {att.purchasePrice && <span style={{ marginLeft:'auto', fontSize:'14px', color:'#6C6C70', fontWeight:'600' }}>{fmtPrice(att.purchasePrice)}</span>}
             </div>
           ))}
+          {accTotal > 0 && (
+            <div style={{ padding:'10px 16px', background:'#F9F9FB', borderTop:'1px solid rgba(0,0,0,0.06)', display:'flex', justifyContent:'space-between' }}>
+              <span style={{ fontSize:'13px', color:'#6C6C70' }}>附加物小计</span>
+              <span style={{ fontSize:'13px', fontWeight:'700', color:'#007AFF' }}>¥{accTotal.toFixed(2)}</span>
+            </div>
+          )}
         </Section>
       )}
 
       {usageRecords.length > 0 && (
-        <Section title={`使用记录 (${usageRecords.length})`}>
-          {usageRecords.slice(0, 10).map((r, i) => (
-            <div key={r.id} style={{ display:'flex', justifyContent:'space-between', padding:'10px 16px', borderBottom: i < Math.min(9, usageRecords.length-1) ? '1px solid rgba(0,0,0,0.06)':'' }}>
+        <Section title={`最近使用记录`}>
+          {usageRecords.slice(0, 5).map((r, i) => (
+            <div key={r.id} style={{ display:'flex', justifyContent:'space-between', padding:'10px 16px', borderBottom: i < Math.min(4, usageRecords.length-1) ? '1px solid rgba(0,0,0,0.06)':'' }}>
               <span style={{ fontSize:'14px', color:'#6C6C70' }}>{fmt(r.date)}</span>
               {r.notes && <span style={{ fontSize:'14px' }}>{r.notes}</span>}
             </div>
           ))}
+          {usageRecords.length > 5 && (
+            <div style={{ padding:'8px 16px', fontSize:'13px', color:'#8E8E93', textAlign:'center' }}>共 {usageRecords.length} 条记录</div>
+          )}
         </Section>
       )}
 
@@ -555,7 +677,7 @@ function ItemRow({ item, categories, onTap, onRecordUse, isLast }) {
 }
 
 // ─── HOME TAB ─────────────────────────────────────────────────────────────────
-function HomeTab({ store, dispatch }) {
+function HomeTab({ store, dispatch, onNavigateToItems }) {
   const [expandedScenes, setExpandedScenes] = useState({});
   const [showCatForm, setShowCatForm] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
@@ -565,10 +687,16 @@ function HomeTab({ store, dispatch }) {
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
+  // Scene manage mode
+  const [manageMode, setManageMode] = useState(false);
+  const [manageSubTab, setManageSubTab] = useState('sort'); // 'sort' | 'cats'
+  const [expandedManageScenes, setExpandedManageScenes] = useState({});
 
   const scenes = store.categories.filter(c => !c.parentId).sort((a,b)=>a.sortOrder-b.sortOrder);
-  const totalAsset = store.items.reduce((s,i)=> s+(Number(i.purchasePrice)||0)*(i.quantity||1), 0);
+  const inStockItems = store.items.filter(i => !i.parentItemId && i.status === 0);
+  const totalAsset = store.items.filter(i => !i.parentItemId).reduce((s,i) => s + (Number(i.purchasePrice)||0) * (i.quantity||1), 0);
   const sceneCount = scenes.length;
+  const subCatCount = store.categories.filter(c => c.parentId).length;
 
   const toggleScene = (id) => setExpandedScenes(e => ({ ...e, [id]: !e[id] }));
 
@@ -578,11 +706,14 @@ function HomeTab({ store, dispatch }) {
     const cat = store.categories.find(c => c.id === catId);
     if (!cat) return [];
     if (!cat.parentId) {
-      // scene: include scene itself + all sub-cats
       const subIds = store.categories.filter(c => c.parentId === catId).map(c => c.id);
       return store.items.filter(i => !i.parentItemId && (i.categoryId === catId || subIds.includes(i.categoryId)));
     }
     return store.items.filter(i => !i.parentItemId && i.categoryId === catId);
+  };
+
+  const getCatTotalValue = (catId) => {
+    return getItemsForCat(catId).reduce((s, i) => s + (Number(i.purchasePrice)||0) * (i.quantity||1), 0);
   };
 
   const handleSaveCat = (data) => {
@@ -600,21 +731,44 @@ function HomeTab({ store, dispatch }) {
     dispatch({ type: 'DELETE_CAT', payload: cat.id });
   };
 
-  const handleSaveItem = (formData, attrs) => {
+  const handleSaveItem = (formData, attrs, accessories) => {
     if (editingItem) {
-      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
+      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs, accessories });
     } else {
-      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs });
+      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs, accessories });
     }
     setShowItemForm(false); setEditingItem(null);
   };
 
-  const handleRecordUse = (item) => {
-    dispatch({ type: 'RECORD_USE', payload: item });
+  const handleRecordUse = (item) => dispatch({ type: 'RECORD_USE', payload: item });
+  const handleUpdateQty = (item, delta) => dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+
+  // Scene sort operations
+  const moveScene = (scene, dir) => {
+    const sorted = [...scenes];
+    const idx = sorted.findIndex(s => s.id === scene.id);
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= sorted.length) return;
+    const updated = sorted.map((s, i) => {
+      if (i === idx) return { ...s, sortOrder: newIdx };
+      if (i === newIdx) return { ...s, sortOrder: idx };
+      return s;
+    });
+    updated.forEach(s => dispatch({ type: 'UPDATE_CAT', payload: s }));
   };
 
-  const handleUpdateQty = (item, delta) => {
-    dispatch({ type: 'UPDATE_QTY', payload: { item, delta } });
+  // Sub-cat sort
+  const moveSubCat = (sub, dir, parentId) => {
+    const subs = store.categories.filter(c => c.parentId === parentId).sort((a,b)=>a.sortOrder-b.sortOrder);
+    const idx = subs.findIndex(s => s.id === sub.id);
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= subs.length) return;
+    subs.forEach((s, i) => {
+      let newOrder = i;
+      if (i === idx) newOrder = newIdx;
+      else if (i === newIdx) newOrder = idx;
+      dispatch({ type: 'UPDATE_CAT', payload: { ...s, sortOrder: newOrder } });
+    });
   };
 
   const catItems = selectedCat ? getItemsForCat(selectedCat) : [];
@@ -623,89 +777,200 @@ function HomeTab({ store, dispatch }) {
     <div style={S.screen}>
       {/* Hero Card */}
       <div style={S.hero}>
-        <div style={{ fontSize:'14px', opacity:0.8, marginBottom:'12px' }}>StuffBox 资产总览</div>
-        <div style={{ fontSize:'32px', fontWeight:'700', marginBottom:'4px' }}>¥{totalAsset.toFixed(2)}</div>
-        <div style={{ display:'flex', gap:'20px', marginTop:'12px' }}>
-          <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:'22px', fontWeight:'700' }}>{store.items.filter(i=>!i.parentItemId).length}</div>
-            <div style={{ fontSize:'12px', opacity:0.75 }}>物品</div>
+        <div style={{ fontSize:'13px', opacity:0.8, marginBottom:'10px', fontWeight:'500' }}>StuffBox 资产总览</div>
+        <div style={{ fontSize:'30px', fontWeight:'700', marginBottom:'12px' }}>¥{totalAsset.toFixed(2)}</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'0', marginTop:'4px' }}>
+          <div style={{ textAlign:'center', padding:'0 4px' }}>
+            <div style={{ fontSize:'20px', fontWeight:'700' }}>{inStockItems.length}</div>
+            <div style={{ fontSize:'11px', opacity:0.75, marginTop:'2px' }}>在库物品</div>
           </div>
-          <div style={{ width:'1px', background:'rgba(255,255,255,0.3)' }} />
-          <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:'22px', fontWeight:'700' }}>{sceneCount}</div>
-            <div style={{ fontSize:'12px', opacity:0.75 }}>场景</div>
+          <div style={{ width:'1px', background:'rgba(255,255,255,0.3)', alignSelf:'stretch' }} />
+          <div style={{ textAlign:'center', padding:'0 4px' }}>
+            <div style={{ fontSize:'20px', fontWeight:'700' }}>{sceneCount}</div>
+            <div style={{ fontSize:'11px', opacity:0.75, marginTop:'2px' }}>场景</div>
           </div>
-          <div style={{ width:'1px', background:'rgba(255,255,255,0.3)' }} />
-          <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:'22px', fontWeight:'700' }}>{store.categories.filter(c=>c.parentId).length}</div>
-            <div style={{ fontSize:'12px', opacity:0.75 }}>分类</div>
+          <div style={{ textAlign:'center', padding:'0 4px' }}>
+            <div style={{ fontSize:'20px', fontWeight:'700' }}>{subCatCount}</div>
+            <div style={{ fontSize:'11px', opacity:0.75, marginTop:'2px' }}>分类</div>
           </div>
         </div>
       </div>
 
-      {/* Scenes */}
+      {/* Scenes Section */}
       <div style={{ padding:'0 16px' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
           <div style={S.sectionHeader}>场景</div>
-          <button style={S.btnSm()} onClick={() => { setEditingCat(null); setAddSubParent(null); setShowCatForm(true); }}>+ 添加场景</button>
+          <div style={{ display:'flex', gap:'6px' }}>
+            <button style={{ ...S.btnSm(manageMode ? '#FF9500' : '#E5E5EA'), color: manageMode ? '#fff' : '#333', fontSize:'12px', padding:'6px 10px' }} onClick={() => setManageMode(!manageMode)}>
+              {manageMode ? '完成' : '管理'}
+            </button>
+            {!manageMode && (
+              <button style={S.btnSm()} onClick={() => { setEditingCat(null); setAddSubParent(null); setShowCatForm(true); }}>+ 场景</button>
+            )}
+          </div>
         </div>
 
-        {scenes.length === 0 && (
-          <div style={{ ...S.card, padding:'32px', textAlign:'center', color:'#8E8E93' }}>
-            还没有场景，点击"添加场景"开始吧
+        {/* Manage Sub-Tabs */}
+        {manageMode && (
+          <div style={{ display:'flex', gap:'6px', marginBottom:'12px', background:'#E5E5EA', borderRadius:'10px', padding:'3px' }}>
+            <button onClick={() => setManageSubTab('sort')} style={{ flex:1, padding:'7px', borderRadius:'8px', border:'none', background: manageSubTab==='sort' ? '#fff' : 'transparent', color: manageSubTab==='sort' ? '#007AFF' : '#6C6C70', fontSize:'13px', fontWeight: manageSubTab==='sort' ? '600' : '400', cursor:'pointer', boxShadow: manageSubTab==='sort' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none' }}>
+              场景排序
+            </button>
+            <button onClick={() => setManageSubTab('cats')} style={{ flex:1, padding:'7px', borderRadius:'8px', border:'none', background: manageSubTab==='cats' ? '#fff' : 'transparent', color: manageSubTab==='cats' ? '#007AFF' : '#6C6C70', fontSize:'13px', fontWeight: manageSubTab==='cats' ? '600' : '400', cursor:'pointer', boxShadow: manageSubTab==='cats' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none' }}>
+              分类管理
+            </button>
           </div>
         )}
 
-        {scenes.map(scene => {
-          const subCats = store.categories.filter(c => c.parentId === scene.id);
-          const sceneItemCount = getItemsForCat(scene.id).length;
-          const expanded = expandedScenes[scene.id];
-          return (
-            <div key={scene.id} style={{ ...S.card, marginBottom:'10px' }}>
-              {/* Scene Header */}
-              <div style={{ display:'flex', alignItems:'center', padding:'12px 16px', cursor:'pointer' }} onClick={() => toggleScene(scene.id)}>
-                <div style={{ ...S.emojiBox(scene.colorHex), marginRight:'12px' }}>{scene.iconName||'🏠'}</div>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:'15px', fontWeight:'600' }}>{scene.name}</div>
-                  <div style={{ fontSize:'13px', color:'#8E8E93' }}>{sceneItemCount} 件物品 · {subCats.length} 个分类</div>
+        {/* Scene Sort Mode */}
+        {manageMode && manageSubTab === 'sort' && (
+          <div>
+            {scenes.length === 0 && (
+              <div style={{ ...S.card, padding:'24px', textAlign:'center', color:'#8E8E93' }}>没有场景</div>
+            )}
+            {scenes.map((scene, idx) => {
+              const sceneItemCount = getItemsForCat(scene.id).length;
+              const sceneTotalValue = getCatTotalValue(scene.id);
+              return (
+                <div key={scene.id} style={{ ...S.card, marginBottom:'8px', display:'flex', alignItems:'center', padding:'12px 16px', gap:'12px' }}>
+                  <div style={S.emojiBox(scene.colorHex)}>{scene.iconName||'🏠'}</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:'15px', fontWeight:'600' }}>{scene.name}</div>
+                    <div style={{ fontSize:'12px', color:'#8E8E93' }}>{sceneItemCount}件 · ¥{sceneTotalValue.toFixed(2)}</div>
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
+                    <button disabled={idx===0} onClick={() => moveScene(scene, -1)} style={{ background: idx===0?'#F2F2F7':'#E5E5EA', border:'none', borderRadius:'6px', width:'30px', height:'26px', fontSize:'14px', cursor: idx===0?'default':'pointer', color: idx===0?'#C7C7CC':'#333', display:'flex', alignItems:'center', justifyContent:'center' }}>↑</button>
+                    <button disabled={idx===scenes.length-1} onClick={() => moveScene(scene, 1)} style={{ background: idx===scenes.length-1?'#F2F2F7':'#E5E5EA', border:'none', borderRadius:'6px', width:'30px', height:'26px', fontSize:'14px', cursor: idx===scenes.length-1?'default':'pointer', color: idx===scenes.length-1?'#C7C7CC':'#333', display:'flex', alignItems:'center', justifyContent:'center' }}>↓</button>
+                  </div>
                 </div>
-                <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                  <button onClick={e => { e.stopPropagation(); openItemList(scene.id); }} style={{ ...S.btnSm(), padding:'5px 10px', fontSize:'12px' }}>查看</button>
-                  <button onClick={e => { e.stopPropagation(); setEditingCat(scene); setAddSubParent(null); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'5px 10px', fontSize:'12px' }}>编辑</button>
-                  <button onClick={e => { e.stopPropagation(); handleDeleteCat(scene); }} style={{ color:'#FF3B30', fontSize:'18px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
-                  <span style={{ color:'#C7C7CC', fontSize:'14px', transform: expanded ? 'rotate(90deg)':'rotate(0deg)', transition:'0.2s' }}>›</span>
-                </div>
-              </div>
+              );
+            })}
+          </div>
+        )}
 
-              {/* Sub-categories */}
-              {expanded && (
-                <div style={{ borderTop:'1px solid rgba(0,0,0,0.06)' }}>
-                  {subCats.map((sub, i) => {
-                    const subCount = store.items.filter(item => !item.parentItemId && item.categoryId === sub.id).length;
-                    return (
-                      <div key={sub.id} style={{ display:'flex', alignItems:'center', padding:'10px 16px 10px 28px', borderBottom: i<subCats.length ? '1px solid rgba(0,0,0,0.04)':'', cursor:'pointer' }} onClick={() => openItemList(sub.id)}>
-                        <div style={{ ...S.emojiBox(sub.colorHex), width:'32px', height:'32px', fontSize:'16px', marginRight:'10px' }}>{sub.iconName||'📁'}</div>
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontSize:'14px', fontWeight:'500' }}>{sub.name}</div>
-                          <div style={{ fontSize:'12px', color:'#8E8E93' }}>{subCount} 件</div>
-                        </div>
-                        <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                          <button onClick={e => { e.stopPropagation(); setEditingCat(sub); setAddSubParent(scene.id); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'4px 8px', fontSize:'11px' }}>编辑</button>
-                          <button onClick={e => { e.stopPropagation(); handleDeleteCat(sub); }} style={{ color:'#FF3B30', fontSize:'16px', border:'none', background:'none', cursor:'pointer' }}>×</button>
-                          <span style={S.chevron}>›</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <button onClick={() => { setAddSubParent(scene.id); setEditingCat(null); setShowCatForm(true); }}
-                          style={{ width:'100%', padding:'10px 16px 10px 28px', textAlign:'left', color:'#007AFF', fontSize:'14px', background:'none', border:'none', cursor:'pointer', borderTop: subCats.length > 0 ? '1px solid rgba(0,0,0,0.04)':'' }}>
-                    + 添加分类
-                  </button>
+        {/* Category Management Mode */}
+        {manageMode && manageSubTab === 'cats' && (
+          <div>
+            {scenes.length === 0 && (
+              <div style={{ ...S.card, padding:'24px', textAlign:'center', color:'#8E8E93' }}>没有场景，请先添加场景</div>
+            )}
+            {scenes.map(scene => {
+              const subCats = store.categories.filter(c => c.parentId === scene.id).sort((a,b)=>a.sortOrder-b.sortOrder);
+              const expandedM = expandedManageScenes[scene.id];
+              const sceneTotalValue = getCatTotalValue(scene.id);
+              const sceneItemCount = getItemsForCat(scene.id).length;
+              return (
+                <div key={scene.id} style={{ ...S.card, marginBottom:'10px' }}>
+                  <div style={{ display:'flex', alignItems:'center', padding:'12px 16px', cursor:'pointer', gap:'10px' }} onClick={() => setExpandedManageScenes(e => ({...e, [scene.id]: !e[scene.id]}))}>
+                    <div style={S.emojiBox(scene.colorHex)}>{scene.iconName||'🏠'}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:'15px', fontWeight:'600' }}>{scene.name}</div>
+                      <div style={{ fontSize:'12px', color:'#8E8E93' }}>{sceneItemCount}件 · ¥{sceneTotalValue.toFixed(2)} · {subCats.length}个分类</div>
+                    </div>
+                    <span style={{ color:'#C7C7CC', fontSize:'14px', transform: expandedM ? 'rotate(90deg)':'rotate(0deg)', transition:'0.2s' }}>›</span>
+                  </div>
+                  {expandedM && (
+                    <div style={{ borderTop:'1px solid rgba(0,0,0,0.06)' }}>
+                      {subCats.map((sub, si) => {
+                        const subCount = store.items.filter(i => !i.parentItemId && i.categoryId === sub.id).length;
+                        const subValue = store.items.filter(i => !i.parentItemId && i.categoryId === sub.id).reduce((s,i)=>s+(Number(i.purchasePrice)||0)*(i.quantity||1),0);
+                        return (
+                          <div key={sub.id} style={{ display:'flex', alignItems:'center', padding:'10px 16px 10px 28px', borderBottom:'1px solid rgba(0,0,0,0.04)', gap:'10px' }}>
+                            <div style={{ ...S.emojiBox(sub.colorHex), width:'32px', height:'32px', fontSize:'16px' }}>{sub.iconName||'📁'}</div>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:'14px', fontWeight:'500' }}>{sub.name}</div>
+                              <div style={{ fontSize:'12px', color:'#8E8E93' }}>{subCount}件 · ¥{subValue.toFixed(2)}</div>
+                            </div>
+                            <div style={{ display:'flex', gap:'4px', alignItems:'center' }}>
+                              <button onClick={() => { setEditingCat(sub); setAddSubParent(scene.id); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'4px 8px', fontSize:'11px' }}>编辑</button>
+                              <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
+                                <button disabled={si===0} onClick={() => moveSubCat(sub, -1, scene.id)} style={{ background: si===0?'transparent':'#E5E5EA', border:'none', borderRadius:'4px', width:'24px', height:'20px', fontSize:'11px', cursor: si===0?'default':'pointer', color: si===0?'#C7C7CC':'#333', display:'flex', alignItems:'center', justifyContent:'center' }}>↑</button>
+                                <button disabled={si===subCats.length-1} onClick={() => moveSubCat(sub, 1, scene.id)} style={{ background: si===subCats.length-1?'transparent':'#E5E5EA', border:'none', borderRadius:'4px', width:'24px', height:'20px', fontSize:'11px', cursor: si===subCats.length-1?'default':'pointer', color: si===subCats.length-1?'#C7C7CC':'#333', display:'flex', alignItems:'center', justifyContent:'center' }}>↓</button>
+                              </div>
+                              <button onClick={() => handleDeleteCat(sub)} style={{ color:'#FF3B30', fontSize:'18px', border:'none', background:'none', cursor:'pointer', padding:'0 2px' }}>×</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <button onClick={() => { setAddSubParent(scene.id); setEditingCat(null); setShowCatForm(true); }}
+                              style={{ width:'100%', padding:'10px 16px 10px 28px', textAlign:'left', color:'#007AFF', fontSize:'14px', background:'none', border:'none', cursor:'pointer' }}>
+                        + 添加分类
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
+
+        {/* Normal Scene Cards */}
+        {!manageMode && (
+          <>
+            {scenes.length === 0 && (
+              <div style={{ ...S.card, padding:'32px', textAlign:'center', color:'#8E8E93' }}>
+                还没有场景，点击"+ 场景"开始吧
+              </div>
+            )}
+            {scenes.map(scene => {
+              const subCats = store.categories.filter(c => c.parentId === scene.id).sort((a,b)=>a.sortOrder-b.sortOrder);
+              const sceneItemCount = getItemsForCat(scene.id).length;
+              const sceneTotalValue = getCatTotalValue(scene.id);
+              const expanded = expandedScenes[scene.id];
+              return (
+                <div key={scene.id} style={{ ...S.card, marginBottom:'10px' }}>
+                  {/* Scene Header */}
+                  <div style={{ display:'flex', alignItems:'center', padding:'12px 16px', cursor:'pointer' }} onClick={() => toggleScene(scene.id)}>
+                    <div style={{ ...S.emojiBox(scene.colorHex), marginRight:'12px' }}>{scene.iconName||'🏠'}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:'15px', fontWeight:'600' }}>{scene.name}</div>
+                      <div style={{ fontSize:'13px', color:'#8E8E93' }}>{sceneItemCount} 件 · ¥{sceneTotalValue.toFixed(2)} · {subCats.length} 个分类</div>
+                    </div>
+                    <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                      <button onClick={e => { e.stopPropagation(); setEditingCat(scene); setAddSubParent(null); setShowCatForm(true); }} style={{ ...S.btnSm('#E5E5EA'), color:'#333', padding:'5px 10px', fontSize:'12px' }}>编辑</button>
+                      <button onClick={e => { e.stopPropagation(); handleDeleteCat(scene); }} style={{ color:'#FF3B30', fontSize:'18px', padding:'0 4px', border:'none', background:'none', cursor:'pointer' }}>×</button>
+                      <span style={{ color:'#C7C7CC', fontSize:'14px', transform: expanded ? 'rotate(90deg)':'rotate(0deg)', transition:'0.2s' }}>›</span>
+                    </div>
+                  </div>
+
+                  {/* Sub-categories (expanded) */}
+                  {expanded && (
+                    <div style={{ borderTop:'1px solid rgba(0,0,0,0.06)' }}>
+                      {subCats.map((sub, i) => {
+                        const subCount = store.items.filter(item => !item.parentItemId && item.categoryId === sub.id).length;
+                        const subValue = store.items.filter(item => !item.parentItemId && item.categoryId === sub.id).reduce((s,i)=>s+(Number(i.purchasePrice)||0)*(i.quantity||1),0);
+                        return (
+                          <div key={sub.id} style={{ display:'flex', alignItems:'center', padding:'10px 16px 10px 28px', borderBottom: i<subCats.length ? '1px solid rgba(0,0,0,0.04)':'', cursor:'pointer' }} onClick={() => openItemList(sub.id)}>
+                            <div style={{ ...S.emojiBox(sub.colorHex), width:'32px', height:'32px', fontSize:'16px', marginRight:'10px' }}>{sub.iconName||'📁'}</div>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:'14px', fontWeight:'500' }}>{sub.name}</div>
+                              <div style={{ fontSize:'12px', color:'#8E8E93' }}>{subCount} 件 · ¥{subValue.toFixed(2)}</div>
+                            </div>
+                            <span style={S.chevron}>›</span>
+                          </div>
+                        );
+                      })}
+                      {/* View all button */}
+                      <button onClick={() => openItemList(scene.id)}
+                              style={{ width:'100%', padding:'11px 16px', textAlign:'center', color:'#007AFF', fontSize:'14px', fontWeight:'600', background:'#F0F7FF', border:'none', cursor:'pointer', borderTop: subCats.length > 0 ? '1px solid rgba(0,0,0,0.04)':'' }}>
+                        查看全部 {sceneItemCount} 件 →
+                      </button>
+                    </div>
+                  )}
+
+                  {/* When not expanded, show quick actions */}
+                  {!expanded && (
+                    <div style={{ borderTop:'1px solid rgba(0,0,0,0.06)', padding:'10px 16px', display:'flex', justifyContent:'flex-end' }}>
+                      <button onClick={() => openItemList(scene.id)} style={{ ...S.btnSm(), padding:'6px 12px', fontSize:'12px' }}>
+                        查看全部 {sceneItemCount} 件
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
       </div>
 
       {/* Category Form Sheet */}
@@ -735,8 +1000,8 @@ function HomeTab({ store, dispatch }) {
 
       {/* Item Form Sheet */}
       <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title={editingItem ? '编辑物品' : '添加物品'}>
-        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) } : { categoryId: selectedCat||'' }}
-          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
+        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id), _accessories: store.items.filter(i=>i.parentItemId===editingItem.id) } : { categoryId: selectedCat||'' }}
+          categories={store.categories} allItems={store.items} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
       </Sheet>
 
       {/* Item Detail Sheet */}
@@ -756,14 +1021,23 @@ function HomeTab({ store, dispatch }) {
 function ItemsTab({ store, dispatch }) {
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('');
+  const [filterSubCat, setFilterSubCat] = useState('');
   const [sortBy, setSortBy] = useState('createdAt');
   const [showSort, setShowSort] = useState(false);
+  const [showFilter, setShowFilter] = useState(false);
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterRating, setFilterRating] = useState(0);
+  const [filterPriceMin, setFilterPriceMin] = useState('');
+  const [filterPriceMax, setFilterPriceMax] = useState('');
 
   const scenes = store.categories.filter(c => !c.parentId);
   const subs = store.categories.filter(c => c.parentId);
+  const hasAdvFilter = filterStatus !== 'all' || filterRating > 0 || filterPriceMin !== '' || filterPriceMax !== '';
+  const setScene = (id) => { setFilterCat(id); setFilterSubCat(''); };
+  const effectiveCatFilter = filterSubCat || filterCat;
 
   const allItems = useMemo(() => {
     let items = store.items.filter(i => !i.parentItemId);
@@ -771,15 +1045,20 @@ function ItemsTab({ store, dispatch }) {
       const q = search.toLowerCase();
       items = items.filter(i => i.name.toLowerCase().includes(q) || (i.brand||'').toLowerCase().includes(q) || (i.notes||'').toLowerCase().includes(q));
     }
-    if (filterCat) {
-      const cat = store.categories.find(c => c.id === filterCat);
+    if (effectiveCatFilter) {
+      const cat = store.categories.find(c => c.id === effectiveCatFilter);
       if (cat && !cat.parentId) {
-        const subIds = store.categories.filter(c => c.parentId === filterCat).map(c => c.id);
-        items = items.filter(i => i.categoryId === filterCat || subIds.includes(i.categoryId));
+        const subIds = store.categories.filter(c => c.parentId === effectiveCatFilter).map(c => c.id);
+        items = items.filter(i => i.categoryId === effectiveCatFilter || subIds.includes(i.categoryId));
       } else {
-        items = items.filter(i => i.categoryId === filterCat);
+        items = items.filter(i => i.categoryId === effectiveCatFilter);
       }
     }
+    if (filterStatus === 'in')  items = items.filter(i => i.status === 0);
+    if (filterStatus === 'out') items = items.filter(i => i.status === 1);
+    if (filterRating > 0) items = items.filter(i => (i.rating||0) >= filterRating);
+    if (filterPriceMin !== '') items = items.filter(i => (Number(i.purchasePrice)||0) >= Number(filterPriceMin));
+    if (filterPriceMax !== '') items = items.filter(i => (Number(i.purchasePrice)||0) <= Number(filterPriceMax));
     return items.sort((a,b) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'price') return (Number(b.purchasePrice)||0) - (Number(a.purchasePrice)||0);
@@ -787,15 +1066,15 @@ function ItemsTab({ store, dispatch }) {
       if (sortBy === 'rating') return (b.rating||0) - (a.rating||0);
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
-  }, [store.items, store.categories, search, filterCat, sortBy]);
+  }, [store.items, store.categories, search, effectiveCatFilter, sortBy, filterStatus, filterRating, filterPriceMin, filterPriceMax]);
 
-  const sortLabels = { createdAt:'最新添加', name:'名称', price:'价格', timesUsed:'使用次数', rating:'评分' };
+  const sortLabels = { createdAt:'最新添加', name:'名称', price:'价格高低', timesUsed:'使用次数', rating:'评分' };
 
-  const handleSaveItem = (formData, attrs) => {
+  const handleSaveItem = (formData, attrs, accessories) => {
     if (editingItem) {
-      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs });
+      dispatch({ type: 'UPDATE_ITEM', payload: { ...editingItem, ...formData, updatedAt: now() }, attrs, accessories });
     } else {
-      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs });
+      dispatch({ type: 'ADD_ITEM', payload: { id: genId(), timesUsed:0, firstUsedAt:null, lastUsedAt:null, createdAt:now(), updatedAt:now(), ...formData }, attrs, accessories });
     }
     setShowItemForm(false); setEditingItem(null);
   };
@@ -806,59 +1085,55 @@ function ItemsTab({ store, dispatch }) {
   return (
     <div style={S.screen}>
       <div style={{ padding:'12px 16px 0' }}>
-        {/* Search */}
         <div style={{ position:'relative', marginBottom:'10px' }}>
           <span style={{ position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', color:'#8E8E93', fontSize:'16px' }}>🔍</span>
           <input style={{ ...S.input, paddingLeft:'36px' }} placeholder="搜索物品名称、品牌..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-
-        {/* Filter chips */}
-        <div style={{ display:'flex', gap:'8px', overflowX:'auto', paddingBottom:'8px', marginBottom:'4px' }}>
-          <button onClick={() => setFilterCat('')} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat==='' ? '#007AFF' : '#E5E5EA', color: filterCat==='' ? '#fff' : '#333', fontSize:'13px', cursor:'pointer', fontWeight: filterCat==='' ? '600':'400' }}>
-            全部
-          </button>
+        <div style={{ fontSize:'11px', color:'#8E8E93', marginBottom:'4px', fontWeight:'600', letterSpacing:'0.3px' }}>场景</div>
+        <div style={{ display:'flex', gap:'8px', overflowX:'auto', paddingBottom:'6px', marginBottom:'4px' }}>
+          <button onClick={() => setScene('')} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat==='' ? '#007AFF' : '#E5E5EA', color: filterCat==='' ? '#fff' : '#333', fontSize:'13px', cursor:'pointer', fontWeight: filterCat==='' ? '600':'400' }}>全部</button>
           {scenes.map(sc => (
-            <React.Fragment key={sc.id}>
-              <button onClick={() => setFilterCat(sc.id)} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat===sc.id ? sc.colorHex||'#007AFF' : '#E5E5EA', color: filterCat===sc.id ? '#fff' : '#333', fontSize:'13px', cursor:'pointer' }}>
-                {sc.iconName} {sc.name}
-              </button>
-              {subs.filter(s => s.parentId===sc.id).map(sub => (
-                <button key={sub.id} onClick={() => setFilterCat(sub.id)} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat===sub.id ? sub.colorHex||'#007AFF' : '#F5F5F5', color: filterCat===sub.id ? '#fff' : '#555', fontSize:'12px', cursor:'pointer' }}>
+            <button key={sc.id} onClick={() => setScene(filterCat===sc.id ? '' : sc.id)} style={{ flexShrink:0, padding:'6px 14px', borderRadius:'20px', border:'none', background: filterCat===sc.id ? (sc.colorHex||'#007AFF') : '#E5E5EA', color: filterCat===sc.id ? '#fff' : '#333', fontSize:'13px', cursor:'pointer', fontWeight: filterCat===sc.id ? '600':'400' }}>
+              {sc.iconName} {sc.name}
+            </button>
+          ))}
+        </div>
+        {filterCat && scenes.find(s=>s.id===filterCat) && subs.filter(s=>s.parentId===filterCat).length > 0 && (
+          <>
+            <div style={{ fontSize:'11px', color:'#8E8E93', marginBottom:'4px', fontWeight:'600', letterSpacing:'0.3px' }}>分类</div>
+            <div style={{ display:'flex', gap:'6px', overflowX:'auto', paddingBottom:'6px', marginBottom:'4px' }}>
+              <button onClick={() => setFilterSubCat('')} style={{ flexShrink:0, padding:'5px 12px', borderRadius:'20px', border:'none', background: filterSubCat==='' ? '#5856D6' : '#F0F0F5', color: filterSubCat==='' ? '#fff' : '#555', fontSize:'12px', cursor:'pointer' }}>全部</button>
+              {subs.filter(s=>s.parentId===filterCat).map(sub => (
+                <button key={sub.id} onClick={() => setFilterSubCat(filterSubCat===sub.id ? '' : sub.id)} style={{ flexShrink:0, padding:'5px 12px', borderRadius:'20px', border:'none', background: filterSubCat===sub.id ? (sub.colorHex||'#5856D6') : '#F0F0F5', color: filterSubCat===sub.id ? '#fff' : '#555', fontSize:'12px', cursor:'pointer' }}>
                   {sub.iconName} {sub.name}
                 </button>
               ))}
-            </React.Fragment>
-          ))}
-        </div>
-
-        {/* Sort & Add */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}>
-          <button onClick={() => setShowSort(true)} style={{ fontSize:'13px', color:'#007AFF', background:'none', border:'none', cursor:'pointer' }}>
-            排序: {sortLabels[sortBy]} ▾
-          </button>
-          <span style={{ fontSize:'13px', color:'#8E8E93' }}>{allItems.length} 件</span>
+            </div>
+          </>
+        )}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px', gap:'8px' }}>
+          <button onClick={() => setShowSort(true)} style={{ fontSize:'13px', color:'#007AFF', background:'none', border:'none', cursor:'pointer', flexShrink:0 }}>排序: {sortLabels[sortBy]} ▾</button>
+          <button onClick={() => setShowFilter(true)} style={{ fontSize:'13px', color: hasAdvFilter ? '#FF9500':'#007AFF', background:'none', border:'none', cursor:'pointer', flexShrink:0 }}>{hasAdvFilter ? '★ ' : ''}筛选 ▾</button>
+          <span style={{ fontSize:'13px', color:'#8E8E93', flex:1, textAlign:'center' }}>{allItems.length} 件</span>
           <button style={S.btnSm()} onClick={() => { setEditingItem(null); setShowItemForm(true); }}>+ 添加</button>
         </div>
       </div>
 
-      {/* Items List */}
       <div style={{ padding:'0 16px 8px' }}>
         {allItems.length === 0 ? (
           <div style={{ ...S.card, padding:'48px', textAlign:'center', color:'#8E8E93' }}>
-            {search || filterCat ? '没有匹配的物品' : '还没有物品，点击 + 添加'}
+            {search || filterCat || hasAdvFilter ? '没有匹配的物品' : '还没有物品，点击 + 添加'}
           </div>
         ) : (
           <div style={S.card}>
             {allItems.map((item, i) => (
               <ItemRow key={item.id} item={item} categories={store.categories} isLast={i===allItems.length-1}
-                onTap={() => setDetailItem(item)}
-                onRecordUse={handleRecordUse} />
+                onTap={() => setDetailItem(item)} onRecordUse={handleRecordUse} />
             ))}
           </div>
         )}
       </div>
 
-      {/* Sort Sheet */}
       <Sheet open={showSort} onClose={() => setShowSort(false)} title="排序方式">
         <div style={{ padding:'8px 16px 32px' }}>
           {Object.entries(sortLabels).map(([k,v]) => (
@@ -870,13 +1145,43 @@ function ItemsTab({ store, dispatch }) {
         </div>
       </Sheet>
 
-      {/* Item Form */}
-      <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title={editingItem ? '编辑物品':'添加物品'}>
-        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id) } : {}}
-          categories={store.categories} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
+      <Sheet open={showFilter} onClose={() => setShowFilter(false)} title="高级筛选">
+        <div style={{ padding:'16px', paddingBottom:'32px' }}>
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>状态</div>
+            <div style={{ display:'flex', gap:'8px' }}>
+              {[['all','全部'],['in','在库'],['out','出库']].map(([v,l]) => (
+                <button key={v} onClick={() => setFilterStatus(v)} style={{ flex:1, padding:'8px', borderRadius:'10px', border:'none', background: filterStatus===v ? '#007AFF':'#E5E5EA', color: filterStatus===v ? '#fff':'#333', fontSize:'14px', cursor:'pointer', fontWeight: filterStatus===v ? '600':'400' }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>评分不低于</div>
+            <div style={{ display:'flex', gap:'8px' }}>
+              <button onClick={() => setFilterRating(0)} style={{ flex:1, padding:'8px', borderRadius:'10px', border:'none', background: filterRating===0 ? '#007AFF':'#E5E5EA', color: filterRating===0 ? '#fff':'#333', fontSize:'13px', cursor:'pointer' }}>不限</button>
+              {[1,2,3,4,5].map(n => (
+                <button key={n} onClick={() => setFilterRating(filterRating===n ? 0 : n)} style={{ flex:1, padding:'8px', borderRadius:'10px', border:'none', background: filterRating===n ? '#FF9500':'#E5E5EA', color: filterRating===n ? '#fff':'#333', fontSize:'12px', cursor:'pointer' }}>{'★'.repeat(n)}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom:'20px' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>价格范围（¥）</div>
+            <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
+              <input style={{ ...S.input, flex:1 }} type="number" placeholder="最低" value={filterPriceMin} onChange={e => setFilterPriceMin(e.target.value)} />
+              <span style={{ color:'#8E8E93' }}>-</span>
+              <input style={{ ...S.input, flex:1 }} type="number" placeholder="最高" value={filterPriceMax} onChange={e => setFilterPriceMax(e.target.value)} />
+            </div>
+          </div>
+          <button style={S.btn()} onClick={() => setShowFilter(false)}>确定</button>
+          {hasAdvFilter && <button style={{ ...S.btn('#8E8E93'), marginTop:'8px' }} onClick={() => { setFilterStatus('all'); setFilterRating(0); setFilterPriceMin(''); setFilterPriceMax(''); setShowFilter(false); }}>重置筛选</button>}
+        </div>
       </Sheet>
 
-      {/* Item Detail */}
+      <Sheet open={showItemForm} onClose={() => { setShowItemForm(false); setEditingItem(null); }} title={editingItem ? '编辑物品':'添加物品'}>
+        <ItemForm initial={editingItem ? { ...editingItem, _attrs: store.itemAttributes.filter(a=>a.itemId===editingItem.id), _accessories: store.items.filter(i=>i.parentItemId===editingItem.id) } : {}}
+          categories={store.categories} allItems={store.items} onSave={handleSaveItem} onClose={() => { setShowItemForm(false); setEditingItem(null); }} />
+      </Sheet>
+
       <Sheet open={!!detailItem} onClose={() => setDetailItem(null)} title="物品详情">
         <ItemDetailSheet item={detailItem} store={store}
           onClose={() => setDetailItem(null)}
@@ -979,8 +1284,58 @@ function ExpiryTab({ store, dispatch }) {
   );
 }
 
+// ─── STATS TAB (已移除，用户不需要) ─────────────────────────────────────────
+// function StatsTab was removed per user request
+
+// ─── SETTINGS TAB placeholder to keep marker ─────────────────────────────────
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({ store, dispatch }) {
+function SettingsTab({ store, dispatch }) { // eslint-disable-line
+  // Brands management
+  const [brands, setBrands] = useState(() => loadBrands());
+  const [showBrandMgr, setShowBrandMgr] = useState(false);
+  const [newBrandName, setNewBrandName] = useState('');
+  const [newBrandNote, setNewBrandNote] = useState('');
+
+  const saveBrandList = (list) => { setBrands(list); saveBrands(list); };
+  const addBrand = () => {
+    if (!newBrandName.trim()) return alert('请输入品牌名称');
+    const newBrand = { id: genId(), name: newBrandName.trim(), note: newBrandNote.trim(), sceneId: '', sortOrder: brands.length };
+    saveBrandList([...brands, newBrand]);
+    setNewBrandName(''); setNewBrandNote('');
+  };
+  const deleteBrand = (id) => {
+    if (!window.confirm('确认删除该品牌？')) return;
+    saveBrandList(brands.filter(b => b.id !== id));
+  };
+
+  // Attribute templates management (new format: { categoryId: [{id,key,options,sortOrder}] })
+  const [attrTemplates, setAttrTemplates] = useState(() => loadAttrTemplates());
+  const [showAttrMgr, setShowAttrMgr] = useState(false);
+  const [selectedTplCat, setSelectedTplCat] = useState('');
+  const [newTplKey, setNewTplKey] = useState('');
+  const [newTplOptions, setNewTplOptions] = useState('');
+
+  const saveAttrTpl = (tpls) => { setAttrTemplates(tpls); saveAttrTemplates(tpls); };
+
+  const addAttrTemplate = () => {
+    if (!selectedTplCat) return alert('请先选择分类');
+    if (!newTplKey.trim()) return alert('请输入属性名');
+    const options = newTplOptions.split(',').map(s => s.trim()).filter(Boolean);
+    const catTpls = attrTemplates[selectedTplCat] || [];
+    const newTpl = { id: genId(), key: newTplKey.trim(), options, sortOrder: catTpls.length };
+    saveAttrTpl({ ...attrTemplates, [selectedTplCat]: [...catTpls, newTpl] });
+    setNewTplKey(''); setNewTplOptions('');
+  };
+
+  const deleteAttrTemplate = (catId, tplId) => {
+    if (!window.confirm('确认删除该属性模板？')) return;
+    const catTpls = (attrTemplates[catId] || []).filter(t => t.id !== tplId);
+    saveAttrTpl({ ...attrTemplates, [catId]: catTpls });
+  };
+
+  const allCats = store.categories;
+  const selectedTplCatTpls = selectedTplCat ? (attrTemplates[selectedTplCat] || []) : [];
+
   const exportCSV = () => {
     const rows = [
       ['名称','品牌','备注','分类','价格','购入日期','数量','评分','状态','有效期','使用次数','首次使用','最近使用'],
@@ -1071,6 +1426,18 @@ function SettingsTab({ store, dispatch }) {
           <SettingRow icon="💰" label="总资产估值" value={`¥${stats.totalValue.toFixed(2)}`} />
         </div>
 
+        {/* Brand Management */}
+        <div style={S.sectionHeader}>品牌管理</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="🏷️" label={`品牌库 (${brands.length})`} value="管理品牌" onClick={() => setShowBrandMgr(true)} />
+        </div>
+
+        {/* Attribute Templates */}
+        <div style={S.sectionHeader}>属性模板</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="📝" label="属性模板管理" value="按分类管理" onClick={() => setShowAttrMgr(true)} />
+        </div>
+
         {/* Export */}
         <div style={S.sectionHeader}>数据管理</div>
         <div style={{ ...S.card, marginBottom:'16px' }}>
@@ -1083,7 +1450,7 @@ function SettingsTab({ store, dispatch }) {
         {/* About */}
         <div style={S.sectionHeader}>关于</div>
         <div style={{ ...S.card, marginBottom:'16px' }}>
-          <SettingRow icon="📱" label="StuffBox" value="v1.0.0" />
+          <SettingRow icon="📱" label="StuffBox" value="v2.0.0" />
           <SettingRow icon="💡" label="数据存储" value="本地 localStorage" />
           <div style={{ padding:'12px 16px', fontSize:'13px', color:'#8E8E93', lineHeight:'1.6' }}>
             数据仅存储在您的设备本地，不上传任何服务器。请定期导出备份，清除浏览器数据会导致数据丢失。
@@ -1099,6 +1466,102 @@ function SettingsTab({ store, dispatch }) {
           </div>
         </div>
       </div>
+
+      {/* Brand Manager Sheet */}
+      <Sheet open={showBrandMgr} onClose={() => setShowBrandMgr(false)} title="品牌管理">
+        <div style={{ padding:'16px', paddingBottom:'32px' }}>
+          {/* Add brand */}
+          <div style={{ marginBottom:'16px', background:'#F9F9F9', borderRadius:'12px', padding:'14px', border:'1px solid #E5E5EA' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'10px' }}>添加品牌</div>
+            <input style={{ ...S.input, marginBottom:'8px' }} placeholder="品牌名称 *" value={newBrandName} onChange={e => setNewBrandName(e.target.value)} />
+            <input style={{ ...S.input, marginBottom:'10px' }} placeholder="备注（可选）" value={newBrandNote} onChange={e => setNewBrandNote(e.target.value)} />
+            <button style={S.btn()} onClick={addBrand}>添加品牌</button>
+          </div>
+
+          {/* Brand list */}
+          {brands.length === 0 ? (
+            <div style={{ textAlign:'center', color:'#8E8E93', padding:'24px', fontSize:'14px' }}>还没有品牌</div>
+          ) : (
+            <div style={S.card}>
+              {brands.map((brand, i) => (
+                <div key={brand.id} style={{ display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom: i<brands.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+                  <div style={{ fontSize:'22px' }}>🏷️</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:'15px', fontWeight:'500' }}>{brand.name}</div>
+                    {brand.note && <div style={{ fontSize:'12px', color:'#8E8E93' }}>{brand.note}</div>}
+                  </div>
+                  <button onClick={() => deleteBrand(brand.id)} style={{ color:'#FF3B30', fontSize:'18px', border:'none', background:'none', cursor:'pointer', padding:'0 4px' }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Sheet>
+
+      {/* Attr Template Manager Sheet */}
+      <Sheet open={showAttrMgr} onClose={() => setShowAttrMgr(false)} title="属性模板管理">
+        <div style={{ padding:'16px', paddingBottom:'32px' }}>
+          {/* Step 1: Select category */}
+          <div style={{ marginBottom:'14px' }}>
+            <div style={S.label}>选择分类</div>
+            <select style={{ ...S.input }} value={selectedTplCat} onChange={e => setSelectedTplCat(e.target.value)}>
+              <option value="">-- 请选择分类 --</option>
+              {store.categories.filter(c => !c.parentId).map(sc => (
+                <optgroup key={sc.id} label={sc.iconName + ' ' + sc.name}>
+                  <option value={sc.id}>{sc.iconName} {sc.name}（场景本身）</option>
+                  {store.categories.filter(s => s.parentId === sc.id).map(sub => (
+                    <option key={sub.id} value={sub.id}>{sub.iconName} {sub.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          {selectedTplCat && (
+            <>
+              {/* Add template attr */}
+              <div style={{ background:'#F9F9F9', borderRadius:'12px', padding:'14px', border:'1px solid #E5E5EA', marginBottom:'14px' }}>
+                <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'10px' }}>添加属性模板</div>
+                <input style={{ ...S.input, marginBottom:'8px' }} placeholder="属性名 *（如：颜色、材质）" value={newTplKey} onChange={e => setNewTplKey(e.target.value)} />
+                <input style={{ ...S.input, marginBottom:'10px' }} placeholder="可选值（逗号分隔，如：红,蓝,绿）可留空" value={newTplOptions} onChange={e => setNewTplOptions(e.target.value)} />
+                <button style={S.btn()} onClick={addAttrTemplate}>添加</button>
+              </div>
+
+              {/* Templates list */}
+              <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'8px' }}>
+                已有模板（{selectedTplCatTpls.length}）
+              </div>
+              {selectedTplCatTpls.length === 0 ? (
+                <div style={{ textAlign:'center', color:'#8E8E93', padding:'20px', fontSize:'14px', background:'#fff', borderRadius:'12px' }}>
+                  该分类暂无属性模板
+                </div>
+              ) : (
+                <div style={S.card}>
+                  {selectedTplCatTpls.map((tpl, i) => (
+                    <div key={tpl.id} style={{ display:'flex', alignItems:'flex-start', gap:'10px', padding:'12px 16px', borderBottom: i<selectedTplCatTpls.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:'14px', fontWeight:'600' }}>{tpl.key}</div>
+                        {tpl.options && tpl.options.length > 0 && (
+                          <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'4px' }}>
+                            {tpl.options.map((opt, oi) => (
+                              <span key={oi} style={{ background:'#E5E5EA', borderRadius:'10px', padding:'2px 8px', fontSize:'11px', color:'#555' }}>{opt}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => deleteAttrTemplate(selectedTplCat, tpl.id)} style={{ color:'#FF3B30', fontSize:'18px', border:'none', background:'none', cursor:'pointer', padding:'0 4px', flexShrink:0 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {!selectedTplCat && (
+            <div style={{ textAlign:'center', color:'#8E8E93', padding:'24px', fontSize:'14px' }}>请先选择分类以管理属性模板</div>
+          )}
+        </div>
+      </Sheet>
     </div>
   );
 }
@@ -1121,16 +1584,23 @@ function reducer(store, action) {
       };
     }
     case 'ADD_ITEM': {
-      const { attrs, ..._ } = action;
       const item = action.payload;
       const newAttrs = (action.attrs||[]).map((a,i) => ({ ...a, id: a.id||genId(), itemId: item.id, sortOrder: i }));
-      return { ...store, items: [...store.items, item], itemAttributes: [...store.itemAttributes, ...newAttrs] };
+      const newAccs = (action.accessories||[]).map(acc => ({ ...acc, parentItemId: item.id, categoryId: item.categoryId||'' }));
+      return { ...store, items: [...store.items, item, ...newAccs], itemAttributes: [...store.itemAttributes, ...newAttrs] };
     }
     case 'UPDATE_ITEM': {
       const item = action.payload;
       const oldAttrs = store.itemAttributes.filter(a => a.itemId !== item.id);
       const newAttrs = (action.attrs||[]).map((a,i) => ({ ...a, id: a.id||genId(), itemId: item.id, sortOrder: i }));
-      return { ...store, items: store.items.map(i => i.id===item.id ? item : i), itemAttributes: [...oldAttrs, ...newAttrs] };
+      const oldAccIds = store.items.filter(i => i.parentItemId === item.id).map(i => i.id);
+      const newAccIds = (action.accessories||[]).map(a => a.id);
+      const removedAccIds = oldAccIds.filter(id => !newAccIds.includes(id));
+      const addedAccs = (action.accessories||[]).filter(a => !oldAccIds.includes(a.id)).map(a => ({ ...a, parentItemId: item.id, categoryId: item.categoryId||'' }));
+      const itemsAfter = store.items
+        .filter(i => !removedAccIds.includes(i.id))
+        .map(i => i.id===item.id ? item : i);
+      return { ...store, items: [...itemsAfter, ...addedAccs], itemAttributes: [...oldAttrs, ...newAttrs] };
     }
     case 'DELETE_ITEM':
       return {
@@ -1183,7 +1653,6 @@ function App() {
     saveStore(store);
   }, [store]);
 
-  // Register service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1205,7 +1674,6 @@ function App() {
 
   return (
     <div style={S.app}>
-      {/* Tab Content */}
       {tab === 0 && <HomeTab store={store} dispatch={dispatch} />}
       {tab === 1 && <ItemsTab store={store} dispatch={dispatch} />}
       {tab === 2 && <ExpiryTab store={store} dispatch={dispatch} />}
