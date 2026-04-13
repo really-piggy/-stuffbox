@@ -1,7 +1,9 @@
-const CACHE_NAME = 'stuffbox-v1';
+const CACHE_NAME = 'stuffbox-v2';
+const BASE = '/-stuffbox';
 const ASSETS = [
-  '/',
-  '/index.html',
+  BASE + '/',
+  BASE + '/index.html',
+  BASE + '/manifest.json',
   'https://unpkg.com/react@18/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
   'https://unpkg.com/@babel/standalone/babel.min.js'
@@ -10,9 +12,8 @@ const ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
-      // Cache local assets only, CDN assets cached on first fetch
-      return cache.addAll(['/', '/index.html']);
-    }).catch(err => console.log('Cache install error:', err))
+      return cache.addAll([BASE + '/', BASE + '/index.html']).catch(err => console.log('Cache install error:', err));
+    })
   );
   self.skipWaiting();
 });
@@ -28,12 +29,12 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  
-  // For navigation requests, serve index.html
+
+  // For navigation requests, serve the correct index.html
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then(cached => {
-        return cached || fetch(event.request);
+      caches.match(BASE + '/index.html').then(cached => {
+        return cached || fetch(BASE + '/index.html').catch(() => fetch(event.request));
       })
     );
     return;
