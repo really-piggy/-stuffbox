@@ -1416,7 +1416,7 @@ function ExpiryTab({ store, dispatch }) {
   return (
     <div style={S.screen}>
       <div style={{ padding:'16px 16px 0' }}>
-        {̶/* 统计汇总卡片 */}
+        {/* 统计汇总卡片 */}
         {itemsWithExpiry.length > 0 && (
           <div style={{ ...S.card, padding:'12px 16px', marginBottom:'16px', display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', textAlign:'center' }}>
             {[
@@ -1432,7 +1432,7 @@ function ExpiryTab({ store, dispatch }) {
             ))}
           </div>
         )}
-        {̶/* 筛选 chips */}
+        {/* 筛选 chips */}
         {itemsWithExpiry.length > 0 && (
           <div style={{ display:'flex', gap:'8px', marginBottom:'12px', overflowX:'auto', paddingBottom:'2px' }}>
             {[['all','全部'],['expired','已过期'],['soon7','7天内'],['soon30','30天内']].map(([v,l]) => (
@@ -1495,7 +1495,7 @@ function ExpiryTab({ store, dispatch }) {
                           </div>
                         </div>
                       </div>
-                      {̶/* 操作按鈕行 */}
+                      {/* 操作按鈕行 */}
                       <div style={{ display:'flex', gap:'8px', marginTop:'10px', paddingLeft:'52px' }}>
                         {group.key === 0 ? (
                           <button onClick={e=>{e.stopPropagation();handleOutStock(item);}}
