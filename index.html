@@ -620,7 +620,7 @@ function ItemDetailSheet({ item, store, onClose, onEdit, onDelete, onRecordUse, 
         <span style={{ fontSize:'15px' }}>数量</span>
         <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
           <button onClick={() => onUpdateQty(item, -1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#E5E5EA', border:'none', fontSize:'20px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>−</button>
-          <span style={{ fontSize:'20px', fontWeight:'600', minWidth:'32px', textAlign:'center' }}>{item.quantity||0}{item.unit ? <span style={{ fontSize:'13px', color:'#8E8E93', marginLeft:'2px' }}>{item.unit}</span> : ''}</span>
+          <span style={{ fontSize:'20px', fontWeight:'600', minWidth:'32px', textAlign:'center' }}>{item.quantity||0}{item.unit ? <span style={{ fontSize:'13px', color:'#8E8E93', marginLeft:'2px' }}>{item.unit}</span> : null}</span>
           <button onClick={() => onUpdateQty(item, 1)} style={{ width:'32px', height:'32px', borderRadius:'50%', background:'#007AFF', border:'none', fontSize:'20px', color:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>+</button>
         </div>
         <button style={S.btnSm()} onClick={() => onRecordUse(item)}>记录一次</button>
@@ -764,7 +764,7 @@ function ItemRow({ item, categories, allItems, onTap, onRecordUse, onUpdateQty, 
       {/* 右侧快捷操作：增减数量 + 记录使用 */}
       <div style={{ display:'flex', alignItems:'center', gap:'4px', flexShrink:0 }}>
         <button onClick={e=>{e.stopPropagation();onUpdateQty(item,-1);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#FF9500',border:'none',color:'#fff',fontSize:'16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>−</button>
-        <span style={{ fontSize:'13px',color:'#444',minWidth:'18px',textAlign:'center',fontWeight:'500' }}>{item.quantity||0}{item.unit ? <span style={{fontSize:'11px',color:'#8E8E93',marginLeft:'1px'}}>{item.unit}</span> : ''}</span>
+        <span style={{ fontSize:'13px',color:'#444',minWidth:'18px',textAlign:'center',fontWeight:'500' }}>{item.quantity||0}{item.unit ? <span style={{fontSize:'11px',color:'#8E8E93',marginLeft:'1px'}}>{item.unit}</span> : null}</span>
         <button onClick={e=>{e.stopPropagation();onUpdateQty(item,1);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#34C759',border:'none',color:'#fff',fontSize:'16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }}>+</button>
         <button onClick={e=>{e.stopPropagation();onRecordUse(item);}} style={{ width:'28px',height:'28px',borderRadius:'50%',background:'#007AFF',border:'none',color:'#fff',fontSize:'14px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1 }} title="记录使用">✓</button>
       </div>
@@ -1269,7 +1269,7 @@ function ItemsTab({ store, dispatch, sortByExternal, onSortByChange }) {
           {Object.entries(sortLabels).map(([k,v]) => (
             <button key={k} onClick={() => { setSortBy(k); setShowSort(false); }}
               style={{ ...S.row, background: k===sortBy ? '#007AFF11':'#fff', borderRadius:'12px', marginBottom:'6px', border:'none', width:'100%', textAlign:'left', fontSize:'15px', fontWeight: k===sortBy ? '600':'400', color: k===sortBy ? '#007AFF':'#1C1C1E' }}>
-              {v} {k===sortBy ? '✓' : ''}
+              {v} {k===sortBy ? '✓' : null}
             </button>
           ))}
         </div>
