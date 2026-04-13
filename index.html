@@ -2032,17 +2032,18 @@ function App() {
   }, [store]);
 
   useEffect(() => {
-    // Debug: show actual URL when launched
+    // Debug: show actual URL and storage info
     const loc = window.location.href;
     const isStandalone = window.navigator.standalone;
-    if (isStandalone) {
-      console.log('PWA standalone mode, URL:', loc);
-      // Show alert once to debug URL issue
-      const debugShown = sessionStorage.getItem('_debug_shown');
-      if (!debugShown) {
-        sessionStorage.setItem('_debug_shown', '1');
-        setTimeout(() => alert('PWA启动URL: ' + loc + '\n数据key: stuffbox_data\n有数据: ' + !!localStorage.getItem('stuffbox_data')), 1000);
-      }
+    const debugShown = sessionStorage.getItem('_debug_shown');
+    if (!debugShown) {
+      sessionStorage.setItem('_debug_shown', '1');
+      const dataSize = localStorage.getItem('stuffbox_data') ? JSON.parse(localStorage.getItem('stuffbox_data')).items?.length : 0;
+      setTimeout(() => alert(
+        '模式: ' + (isStandalone ? 'PWA主屏幕' : 'Safari浏览器') + '\n' +
+        'URL: ' + loc + '\n' +
+        '物品数量: ' + (dataSize || 0)
+      ), 800);
     }
     if ('serviceWorker' in navigator) {
       // Unregister any old service workers first, then register new one
