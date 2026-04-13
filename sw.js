@@ -1,46 +1,36 @@
-const CACHE_NAME = 'stuffbox-v2';
+const CACHE_NAME = 'stuffbox-v3';
 const BASE = '/-stuffbox';
-const ASSETS = [
-  BASE + '/',
-  BASE + '/index.html',
-  BASE + '/manifest.json',
-  'https://unpkg.com/react@18/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone/babel.min.js'
-];
 
 self.addEventListener('install', event => {
+  // Force immediate activation, skip waiting
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll([BASE + '/', BASE + '/index.html']).catch(err => console.log('Cache install error:', err));
+      return cache.addAll([
+        BASE + '/',
+        BASE + '/index.html',
+        BASE + '/manifest.json'
+      ]).catch(err => console.log('Cache install error:', err));
     })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
+  // Delete ALL old caches
   event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+      Promise.all(keys.map(k => {
+        console.log('Deleting cache:', k);
+        return caches.delete(k);
+      }))
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // For navigation requests, serve the correct index.html
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      caches.match(BASE + '/index.html').then(cached => {
-        return cached || fetch(BASE + '/index.html').catch(() => fetch(event.request));
-      })
-    );
-    return;
-  }
-
-  // Cache-first for CDN assets
+  // Cache-first for CDN assets (unpkg)
   if (url.hostname === 'unpkg.com') {
     event.respondWith(
       caches.open(CACHE_NAME).then(cache =>
@@ -56,7 +46,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Network-first for everything else
+  // For all other requests: network first, fall back to cache
   event.respondWith(
     fetch(event.request).catch(() => caches.match(event.request))
   );

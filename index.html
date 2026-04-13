@@ -2033,7 +2033,13 @@ function App() {
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      // Unregister any old service workers first, then register new one
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        const unregPromises = regs.map(r => r.unregister());
+        return Promise.all(unregPromises);
+      }).then(() => {
+        return navigator.serviceWorker.register('sw.js');
+      }).catch(() => {});
     }
   }, []);
 
