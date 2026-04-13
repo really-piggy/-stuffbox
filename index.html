@@ -77,6 +77,20 @@ function saveAttrTemplates(tpls) {
   localStorage.setItem(ATTR_TEMPLATES_KEY, JSON.stringify(tpls));
 }
 
+const UNITS_KEY = 'stuffbox_units';
+const DEFAULT_UNITS = ['个','件','包','盒','瓶','罐','袋','套','双','对','本','册','张','片','块','颗','粒','支','管','条','根','卷','箱','桶','升','毫升','克','千克','米','厘米'];
+
+function loadUnits() {
+  try {
+    const raw = localStorage.getItem(UNITS_KEY);
+    if (!raw) return [...DEFAULT_UNITS];
+    return JSON.parse(raw);
+  } catch { return [...DEFAULT_UNITS]; }
+}
+function saveUnits(units) {
+  localStorage.setItem(UNITS_KEY, JSON.stringify(units));
+}
+
 // ─── Emoji Picker Data ────────────────────────────────────────────────────────
 const EMOJI_GROUPS = [
   { label: '家居', emojis: ['🏠','🛋️','🛏️','🚿','🪴','🪑','🚪','🪞','🪟','🛁','🧹','🧺','🪣','🔑','🕯️','🖼️'] },
@@ -259,18 +273,24 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
   const removeAttr = (i) => setAttrs(a => a.filter((_,j) => j!==i));
 
   // Load attr templates for selected category
+  const catAttrTpls = useMemo(() => {
+    if (!form.categoryId) return [];
+    return loadAttrTemplates()[form.categoryId] || [];
+  }, [form.categoryId]);
+
   const applyAttrTemplates = () => {
     const catId = form.categoryId;
     if (!catId) { alert('请先选择分类'); return; }
-    const allTpls = loadAttrTemplates();
-    const tplList = allTpls[catId] || [];
+    const tplList = catAttrTpls;
     if (tplList.length === 0) { alert('当前分类没有属性模板，请先在设置中添加'); return; }
-    const existingKeys = attrs.map(a => a.key);
-    const newAttrs = tplList
-      .filter(t => !existingKeys.includes(t.key))
-      .map((t, i) => ({ id: genId(), key: t.key, value: '', sortOrder: attrs.length + i }));
-    if (newAttrs.length === 0) { alert('所有模板属性已存在'); return; }
-    setAttrs(a => [...a, ...newAttrs]);
+    setAttrs(prev => {
+      const existingKeys = prev.map(a => a.key.trim());
+      const newAttrs = tplList
+        .filter(t => !existingKeys.includes(t.key.trim()))
+        .map((t, i) => ({ id: genId(), key: t.key, value: '', sortOrder: prev.length + i }));
+      if (newAttrs.length === 0) { alert('所有模板属性已存在'); return prev; }
+      return [...prev, ...newAttrs];
+    });
   };
 
   // Calculate totals
@@ -383,7 +403,7 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
             <input style={{ ...inputStyle, flex:'1.2', minWidth:0 }} placeholder="单位" value={form.unit||''} onChange={e => set('unit', e.target.value)} />
           </div>
           {(() => {
-            const units = ['个','件','包','盒','瓶','罐','袋','套','双','对','本','册','张','片','块','颗','粒','支','管','条','根','卷','箱','桶','升','毫升','克','千克','米','厘米'];
+            const units = loadUnits();
             const filtered = units.filter(u => !form.unit || u.includes(form.unit));
             return filtered.length > 0 && form.unit && !units.some(u => u === form.unit) ? (
               <div style={{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'4px' }}>
@@ -434,9 +454,8 @@ function ItemForm({ initial, categories, allItems, onSave, onClose }) {
           </div>
         </div>
         {attrs.map((a, i) => {
-          const catTpls = loadAttrTemplates()[form.categoryId] || [];
-          const tplForKey = catTpls.find(t => t.key === a.key);
-          const opts = tplForKey?.options || [];
+          const tplForKey = catAttrTpls.find(t => t.key.trim() === a.key.trim());
+          const opts = tplForKey ? (tplForKey.options || []) : [];
           return (
           <div key={a.id} style={{ marginBottom:'8px' }}>
             <div style={{ display:'flex', gap:'8px' }}>
@@ -1545,6 +1564,28 @@ function ExpiryTab({ store, dispatch }) {
 // ─── SETTINGS TAB placeholder to keep marker ─────────────────────────────────
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
 function SettingsTab({ store, dispatch }) { // eslint-disable-line
+  // Units management
+  const [units, setUnits] = useState(() => loadUnits());
+  const [showUnitMgr, setShowUnitMgr] = useState(false);
+  const [newUnitName, setNewUnitName] = useState('');
+
+  const saveUnitList = (list) => { setUnits(list); saveUnits(list); };
+  const addUnit = () => {
+    const name = newUnitName.trim();
+    if (!name) return alert('请输入单位名称');
+    if (units.includes(name)) return alert('该单位已存在');
+    saveUnitList([...units, name]);
+    setNewUnitName('');
+  };
+  const deleteUnit = (name) => {
+    if (!window.confirm('确认删除单位「' + name + '」？')) return;
+    saveUnitList(units.filter(u => u !== name));
+  };
+  const resetUnits = () => {
+    if (!window.confirm('确认恢复默认单位列表？')) return;
+    saveUnitList([...DEFAULT_UNITS]);
+  };
+
   // Brands management
   const [brands, setBrands] = useState(() => loadBrands());
   const [showBrandMgr, setShowBrandMgr] = useState(false);
@@ -1681,6 +1722,12 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
           <SettingRow icon="💰" label="总资产估值" value={`¥${stats.totalValue.toFixed(2)}`} />
         </div>
 
+        {/* Unit Management */}
+        <div style={S.sectionHeader}>单位管理</div>
+        <div style={{ ...S.card, marginBottom:'16px' }}>
+          <SettingRow icon="📐" label={`单位库 (${units.length})`} value="管理单位" onClick={() => setShowUnitMgr(true)} />
+        </div>
+
         {/* Brand Management */}
         <div style={S.sectionHeader}>品牌管理</div>
         <div style={{ ...S.card, marginBottom:'16px' }}>
@@ -1721,6 +1768,34 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
           </div>
         </div>
       </div>
+
+      {/* Unit Manager Sheet */}
+      <Sheet open={showUnitMgr} onClose={() => setShowUnitMgr(false)} title="单位管理">
+        <div style={{ padding:'16px', paddingBottom:'32px' }}>
+          {/* Add unit */}
+          <div style={{ marginBottom:'16px', background:'#F9F9F9', borderRadius:'12px', padding:'14px', border:'1px solid #E5E5EA' }}>
+            <div style={{ fontSize:'13px', fontWeight:'600', color:'#6C6C70', marginBottom:'10px' }}>添加单位</div>
+            <input style={{ ...S.input, marginBottom:'10px' }} placeholder="单位名称（如：台、组、批...）" value={newUnitName} onChange={e => setNewUnitName(e.target.value)} />
+            <button style={S.btn()} onClick={addUnit}>添加单位</button>
+          </div>
+          {/* Reset button */}
+          <button style={{ ...S.btn('#FF9500'), marginBottom:'16px' }} onClick={resetUnits}>恢复默认单位列表</button>
+          {/* Unit list */}
+          {units.length === 0 ? (
+            <div style={{ textAlign:'center', color:'#8E8E93', padding:'24px', fontSize:'14px' }}>还没有单位</div>
+          ) : (
+            <div style={{ ...S.card }}>
+              {units.map((unit, i) => (
+                <div key={unit} style={{ display:'flex', alignItems:'center', gap:'12px', padding:'10px 16px', borderBottom: i<units.length-1 ? '1px solid rgba(0,0,0,0.06)':'' }}>
+                  <div style={{ fontSize:'20px' }}>📐</div>
+                  <div style={{ flex:1, fontSize:'15px', fontWeight:'500' }}>{unit}</div>
+                  <button onClick={() => deleteUnit(unit)} style={{ color:'#FF3B30', fontSize:'18px', border:'none', background:'none', cursor:'pointer', padding:'0 4px' }}>x</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Sheet>
 
       {/* Brand Manager Sheet */}
       <Sheet open={showBrandMgr} onClose={() => setShowBrandMgr(false)} title="品牌管理">
