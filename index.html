@@ -1715,6 +1715,143 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
     input.click();
   };
 
+  // ── Excel / CSV 快捷导入 ──────────────────────────────────────
+  const [showImportSheet, setShowImportSheet] = useState(false);
+  const [importPreview, setImportPreview] = useState(null); // { rows, errors }
+  const [importFile, setImportFile] = useState(null);
+
+  const IMPORT_COLS = [
+    { key: 'name',           label: '名称*',     required: true },
+    { key: 'brand',          label: '品牌',       required: false },
+    { key: 'categoryName',   label: '分类',       required: false },
+    { key: 'purchasePrice',  label: '价格',       required: false },
+    { key: 'purchaseDate',   label: '购入日期',   required: false },
+    { key: 'quantity',       label: '数量',       required: false },
+    { key: 'unit',           label: '单位',       required: false },
+    { key: 'expirationDate', label: '有效期',     required: false },
+    { key: 'notes',          label: '备注',       required: false },
+  ];
+
+  const downloadImportTemplate = () => {
+    const header = IMPORT_COLS.map(c => c.label);
+    const example = ['示例物品','苹果','食品','29.9','2024-01-01','2','个','2025-12-31','这是备注'];
+    const csv = [header, example].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'stuffbox_导入模板.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const parseCSVLine = (line) => {
+    const result = [];
+    let cur = '', inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
+        else inQuote = !inQuote;
+      } else if (ch === ',' && !inQuote) {
+        result.push(cur.trim()); cur = '';
+      } else cur += ch;
+    }
+    result.push(cur.trim());
+    return result;
+  };
+
+  const handleImportFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        let text = ev.target.result;
+        // 去掉 BOM
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) throw new Error('文件内容为空，至少需要标题行和一行数据');
+        const headers = parseCSVLine(lines[0]).map(h => h.replace(/\*/g,'').trim());
+        const colMap = {};
+        IMPORT_COLS.forEach(col => {
+          const labelClean = col.label.replace(/\*/g,'').trim();
+          const idx = headers.findIndex(h => h === labelClean || h === col.key);
+          if (idx >= 0) colMap[col.key] = idx;
+        });
+        const rows = [];
+        const errors = [];
+        lines.slice(1).forEach((line, li) => {
+          const cells = parseCSVLine(line);
+          const row = {};
+          IMPORT_COLS.forEach(col => {
+            row[col.key] = colMap[col.key] !== undefined ? (cells[colMap[col.key]] || '').trim() : '';
+          });
+          if (!row.name) { errors.push(`第 ${li+2} 行：名称不能为空，已跳过`); return; }
+          // 价格校验
+          if (row.purchasePrice && isNaN(Number(row.purchasePrice))) {
+            errors.push(`第 ${li+2} 行「${row.name}」：价格格式错误，已清空`);
+            row.purchasePrice = '';
+          }
+          // 数量校验
+          if (row.quantity && isNaN(Number(row.quantity))) {
+            errors.push(`第 ${li+2} 行「${row.name}」：数量格式错误，已设为 1`);
+            row.quantity = '1';
+          }
+          rows.push(row);
+        });
+        setImportPreview({ rows, errors });
+      } catch(err) {
+        alert('解析失败：' + err.message);
+        setImportPreview(null);
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleConfirmImport = () => {
+    if (!importPreview || !importPreview.rows.length) return;
+    const { rows } = importPreview;
+    // 自动创建不存在的分类（挂在顶层）
+    let newCategories = [...store.categories];
+    const getCatId = (name) => {
+      if (!name) return '';
+      const existing = newCategories.find(c => c.name === name);
+      if (existing) return existing.id;
+      const newCat = { id: genId(), name, parentId: null, iconName: '📦', color: '#8B5CF6', sortOrder: newCategories.filter(c=>!c.parentId).length, createdAt: now() };
+      newCategories.push(newCat);
+      return newCat.id;
+    };
+    const newItems = rows.map(row => ({
+      id: genId(),
+      name: row.name,
+      brand: row.brand || '',
+      categoryId: getCatId(row.categoryName),
+      purchasePrice: row.purchasePrice !== '' ? row.purchasePrice : '',
+      purchaseDate: row.purchaseDate || '',
+      quantity: Number(row.quantity) || 1,
+      unit: row.unit || '',
+      expirationDate: row.expirationDate || '',
+      notes: row.notes || '',
+      iconName: '📦',
+      status: 0,
+      rating: 0,
+      timesUsed: 0,
+      firstUsedAt: null,
+      lastUsedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+    }));
+    // 添加新分类
+    const addedCats = newCategories.filter(c => !store.categories.find(x => x.id === c.id));
+    addedCats.forEach(cat => dispatch({ type: 'ADD_CAT', payload: cat }));
+    // 批量添加物品
+    newItems.forEach(item => dispatch({ type: 'ADD_ITEM', payload: item, attrs: [], accessories: [] }));
+    alert(`✅ 导入完成！共导入 ${newItems.length} 条物品${addedCats.length ? `，自动创建 ${addedCats.length} 个新分类` : ''}。`);
+    setShowImportSheet(false);
+    setImportPreview(null);
+    setImportFile(null);
+  };
+
   const clearAll = () => {
     if (!window.confirm('确认清空所有数据？此操作不可恢复！')) return;
     if (!window.confirm('再次确认：清空所有物品、分类和记录？')) return;
@@ -1776,6 +1913,7 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
           <SettingRow icon="📤" label="导出 CSV" value="备份物品数据" onClick={exportCSV} />
           <SettingRow icon="💾" label="导出 JSON 备份" value="完整数据备份" onClick={exportJSON} />
           <SettingRow icon="📥" label="导入 JSON 备份" value="从备份恢复" onClick={importJSON} />
+          <SettingRow icon="📊" label="Excel/CSV 快捷导入" value="按模板批量导入物品" onClick={() => setShowImportSheet(true)} />
           <SettingRow icon="🗑️" label="清空所有数据" onClick={clearAll} danger />
         </div>
 
@@ -1922,6 +2060,84 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
           )}
         </div>
       </Sheet>
+
+      {/* ── Excel/CSV 快捷导入面板 ── */}
+      <Sheet open={showImportSheet} onClose={() => { setShowImportSheet(false); setImportPreview(null); setImportFile(null); }} title="Excel/CSV 快捷导入">
+        <div style={{ padding:'0 16px 32px' }}>
+
+          {/* 第1步：下载模板 */}
+          <div style={{ marginBottom:'20px' }}>
+            <div style={{ fontWeight:'600', fontSize:'15px', marginBottom:'6px', color:'#1C1C1E' }}>① 下载填写模板</div>
+            <div style={{ fontSize:'13px', color:'#6C6C70', marginBottom:'10px' }}>下载 CSV 模板，在 Excel / Numbers / WPS 中填好数据后保存为 CSV 格式再上传。</div>
+            <div style={{ fontSize:'12px', color:'#8E8E93', background:'#F2F2F7', borderRadius:'8px', padding:'10px 12px', marginBottom:'10px', lineHeight:'1.8' }}>
+              模板列说明：<br/>
+              <b>名称*</b>（必填）、品牌、分类、价格、购入日期（YYYY-MM-DD）、数量、单位、有效期（YYYY-MM-DD）、备注
+            </div>
+            <button onClick={downloadImportTemplate} style={{ width:'100%', padding:'12px', borderRadius:'12px', border:'none', background:'#007AFF', color:'#fff', fontSize:'15px', fontWeight:'600', cursor:'pointer' }}>📥 下载 CSV 模板</button>
+          </div>
+
+          {/* 第2步：上传文件 */}
+          <div style={{ marginBottom:'20px' }}>
+            <div style={{ fontWeight:'600', fontSize:'15px', marginBottom:'6px', color:'#1C1C1E' }}>② 上传填好的 CSV 文件</div>
+            <label style={{ display:'block', width:'100%', boxSizing:'border-box', padding:'24px 16px', borderRadius:'12px', border:'2px dashed #C7C7CC', background:'#F9F9F9', textAlign:'center', cursor:'pointer' }}>
+              <div style={{ fontSize:'28px', marginBottom:'6px' }}>📂</div>
+              <div style={{ fontSize:'14px', color:'#3C3C43', fontWeight:'500' }}>{importFile ? importFile.name : '点击选择 CSV 文件'}</div>
+              <div style={{ fontSize:'12px', color:'#8E8E93', marginTop:'4px' }}>支持 .csv 格式（UTF-8 或 GBK）</div>
+              <input type="file" accept=".csv" style={{ display:'none' }} onChange={handleImportFileChange} />
+            </label>
+          </div>
+
+          {/* 第3步：预览与确认 */}
+          {importPreview && (
+            <div style={{ marginBottom:'20px' }}>
+              <div style={{ fontWeight:'600', fontSize:'15px', marginBottom:'10px', color:'#1C1C1E' }}>③ 预览与确认导入</div>
+
+              {importPreview.errors.length > 0 && (
+                <div style={{ background:'#FFF3CD', border:'1px solid #FFD60A', borderRadius:'10px', padding:'10px 12px', marginBottom:'12px' }}>
+                  <div style={{ fontWeight:'600', fontSize:'13px', color:'#856404', marginBottom:'4px' }}>⚠️ 发现 {importPreview.errors.length} 个问题（已自动处理）</div>
+                  {importPreview.errors.map((e,i) => <div key={i} style={{ fontSize:'12px', color:'#856404' }}>{e}</div>)}
+                </div>
+              )}
+
+              <div style={{ background:'#F2F2F7', borderRadius:'10px', padding:'10px 12px', marginBottom:'14px', fontSize:'14px' }}>
+                共识别 <b style={{ color:'#007AFF' }}>{importPreview.rows.length}</b> 条物品记录
+              </div>
+
+              {/* 预览表格（最多显示5条） */}
+              <div style={{ overflowX:'auto', marginBottom:'14px' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                  <thead>
+                    <tr style={{ background:'#E5E5EA' }}>
+                      {['名称','品牌','分类','价格','数量'].map(h => (
+                        <th key={h} style={{ padding:'6px 8px', textAlign:'left', fontWeight:'600', color:'#3C3C43', whiteSpace:'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.rows.slice(0,5).map((row,i) => (
+                      <tr key={i} style={{ borderBottom:'1px solid #E5E5EA' }}>
+                        <td style={{ padding:'6px 8px', maxWidth:'80px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.name}</td>
+                        <td style={{ padding:'6px 8px', color:'#6C6C70' }}>{row.brand||'—'}</td>
+                        <td style={{ padding:'6px 8px', color:'#6C6C70' }}>{row.categoryName||'—'}</td>
+                        <td style={{ padding:'6px 8px', color:'#6C6C70' }}>{row.purchasePrice ? '¥'+row.purchasePrice : '—'}</td>
+                        <td style={{ padding:'6px 8px', color:'#6C6C70' }}>{row.quantity||1}{row.unit||''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importPreview.rows.length > 5 && (
+                  <div style={{ textAlign:'center', color:'#8E8E93', fontSize:'12px', padding:'6px' }}>...还有 {importPreview.rows.length - 5} 条</div>
+                )}
+              </div>
+
+              <button onClick={handleConfirmImport} style={{ width:'100%', padding:'14px', borderRadius:'12px', border:'none', background:'#34C759', color:'#fff', fontSize:'16px', fontWeight:'700', cursor:'pointer' }}>
+                ✅ 确认导入 {importPreview.rows.length} 条物品
+              </button>
+            </div>
+          )}
+        </div>
+      </Sheet>
+
     </div>
   );
 }
