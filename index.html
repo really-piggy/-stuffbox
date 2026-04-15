@@ -1663,21 +1663,48 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
   const selectedTplCatTpls = selectedTplCat ? (attrTemplates[selectedTplCat] || []) : [];
 
   const exportCSV = () => {
-    const rows = [
-      ['名称','品牌','备注','分类','价格','购入日期','数量','评分','状态','有效期','使用次数','首次使用','最近使用'],
-      ...store.items.filter(i=>!i.parentItemId).map(item => {
-        const cat = store.categories.find(c=>c.id===item.categoryId);
-        return [
-          item.name, item.brand||'', item.notes||'',
-          cat ? cat.name : '',
-          item.purchasePrice||'', item.purchaseDate||'',
-          item.quantity||1, item.rating||0,
-          item.status===0?'在库':'出库',
-          item.expirationDate||'',
-          item.timesUsed||0, item.firstUsedAt||'', item.lastUsedAt||''
-        ];
-      })
-    ];
+    // 计算所有主物品中最多有几个附加物
+    const mainItems = store.items.filter(i => !i.parentItemId);
+    const maxAccCount = mainItems.reduce((max, item) => {
+      const cnt = store.items.filter(i => i.parentItemId === item.id).length;
+      return Math.max(max, cnt);
+    }, 0);
+
+    // 构建表头：主物品固定列 + 动态附加物列
+    const baseHeader = ['名称','品牌','备注','分类','价格','购入日期','数量','单位','评分','状态','有效期','使用次数','首次使用','最近使用'];
+    const accHeaders = [];
+    for (let i = 1; i <= maxAccCount; i++) {
+      accHeaders.push(`附加物${i}名称`, `附加物${i}品牌`, `附加物${i}价格`, `附加物${i}购入日期`);
+    }
+    const header = [...baseHeader, ...accHeaders];
+
+    const dataRows = mainItems.map(item => {
+      const cat = store.categories.find(c => c.id === item.categoryId);
+      const accs = store.items.filter(i => i.parentItemId === item.id);
+      const baseRow = [
+        item.name, item.brand||'', item.notes||'',
+        cat ? cat.name : '',
+        item.purchasePrice||'', item.purchaseDate||'',
+        item.quantity||1, item.unit||'', item.rating||0,
+        item.status===0?'在库':'出库',
+        item.expirationDate||'',
+        item.timesUsed||0, item.firstUsedAt||'', item.lastUsedAt||''
+      ];
+      // 每个附加物占4列，不足的补空
+      const accCols = [];
+      for (let i = 0; i < maxAccCount; i++) {
+        const acc = accs[i];
+        accCols.push(
+          acc ? (acc.name||'') : '',
+          acc ? (acc.brand||'') : '',
+          acc ? (acc.purchasePrice||'') : '',
+          acc ? (acc.purchaseDate||'') : ''
+        );
+      }
+      return [...baseRow, ...accCols];
+    });
+
+    const rows = [header, ...dataRows];
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1731,10 +1758,28 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
     { key: 'expirationDate', label: '有效期',     required: false },
     { key: 'notes',          label: '备注',       required: false },
   ];
+  // 附加物每个附件的固定字段
+  const ACC_FIELDS = [
+    { key: 'name',          labelSuffix: '名称' },
+    { key: 'brand',         labelSuffix: '品牌' },
+    { key: 'purchasePrice', labelSuffix: '价格' },
+    { key: 'purchaseDate',  labelSuffix: '购入日期' },
+  ];
 
   const downloadImportTemplate = () => {
-    const header = IMPORT_COLS.map(c => c.label);
-    const example = ['示例物品','苹果','食品','29.9','2024-01-01','2','个','2025-12-31','这是备注'];
+    // 主物品列
+    const baseHeader = IMPORT_COLS.map(c => c.label);
+    // 示例带2个附加物
+    const accHeader = [];
+    for (let i = 1; i <= 2; i++) {
+      ACC_FIELDS.forEach(f => accHeader.push(`附加物${i}${f.labelSuffix}`));
+    }
+    const header = [...baseHeader, ...accHeader];
+    const example = [
+      '示例物品','苹果','食品','29.9','2024-01-01','2','个','2025-12-31','这是备注',
+      '充电线','Apple','59','2024-01-01',  // 附加物1
+      '保护壳','小米','19.9','2024-02-01'   // 附加物2
+    ];
     const csv = [header, example].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1772,12 +1817,27 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length < 2) throw new Error('文件内容为空，至少需要标题行和一行数据');
         const headers = parseCSVLine(lines[0]).map(h => h.replace(/\*/g,'').trim());
+        // 主物品列映射
         const colMap = {};
         IMPORT_COLS.forEach(col => {
           const labelClean = col.label.replace(/\*/g,'').trim();
           const idx = headers.findIndex(h => h === labelClean || h === col.key);
           if (idx >= 0) colMap[col.key] = idx;
         });
+        // 附加物列映射：扫描表头找「附加物N字段」
+        const accColMaps = []; // [{name, brand, purchasePrice, purchaseDate}, ...]
+        let accIdx = 1;
+        while (true) {
+          const map = {};
+          ACC_FIELDS.forEach(f => {
+            const label = `附加物${accIdx}${f.labelSuffix}`;
+            const idx = headers.findIndex(h => h === label);
+            if (idx >= 0) map[f.key] = idx;
+          });
+          if (Object.keys(map).length === 0) break;
+          accColMaps.push(map);
+          accIdx++;
+        }
         const rows = [];
         const errors = [];
         lines.slice(1).forEach((line, li) => {
@@ -1797,6 +1857,23 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
             errors.push(`第 ${li+2} 行「${row.name}」：数量格式错误，已设为 1`);
             row.quantity = '1';
           }
+          // 解析附加物
+          row._accessories = [];
+          accColMaps.forEach((map, ai) => {
+            const accName = map.name !== undefined ? (cells[map.name] || '').trim() : '';
+            if (!accName) return; // 名称为空则跳过该附加物
+            const acc = {
+              name: accName,
+              brand: map.brand !== undefined ? (cells[map.brand] || '').trim() : '',
+              purchasePrice: map.purchasePrice !== undefined ? (cells[map.purchasePrice] || '').trim() : '',
+              purchaseDate: map.purchaseDate !== undefined ? (cells[map.purchaseDate] || '').trim() : '',
+            };
+            if (acc.purchasePrice && isNaN(Number(acc.purchasePrice))) {
+              errors.push(`第 ${li+2} 行「${row.name}」附加物${ai+1}价格格式错误，已清空`);
+              acc.purchasePrice = '';
+            }
+            row._accessories.push(acc);
+          });
           rows.push(row);
         });
         setImportPreview({ rows, errors });
@@ -1821,32 +1898,60 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
       newCategories.push(newCat);
       return newCat.id;
     };
-    const newItems = rows.map(row => ({
-      id: genId(),
-      name: row.name,
-      brand: row.brand || '',
-      categoryId: getCatId(row.categoryName),
-      purchasePrice: row.purchasePrice !== '' ? row.purchasePrice : '',
-      purchaseDate: row.purchaseDate || '',
-      quantity: Number(row.quantity) || 1,
-      unit: row.unit || '',
-      expirationDate: row.expirationDate || '',
-      notes: row.notes || '',
-      iconName: '📦',
-      status: 0,
-      rating: 0,
-      timesUsed: 0,
-      firstUsedAt: null,
-      lastUsedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-    }));
+    const newItemsWithAccs = rows.map(row => {
+      const itemId = genId();
+      const catId = getCatId(row.categoryName);
+      const item = {
+        id: itemId,
+        name: row.name,
+        brand: row.brand || '',
+        categoryId: catId,
+        purchasePrice: row.purchasePrice !== '' ? row.purchasePrice : '',
+        purchaseDate: row.purchaseDate || '',
+        quantity: Number(row.quantity) || 1,
+        unit: row.unit || '',
+        expirationDate: row.expirationDate || '',
+        notes: row.notes || '',
+        iconName: '📦',
+        status: 0,
+        rating: 0,
+        timesUsed: 0,
+        firstUsedAt: null,
+        lastUsedAt: null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      const accessories = (row._accessories || []).map(acc => ({
+        id: genId(),
+        parentItemId: itemId,
+        categoryId: catId,
+        name: acc.name,
+        brand: acc.brand || '',
+        purchasePrice: acc.purchasePrice || '',
+        purchaseDate: acc.purchaseDate || '',
+        iconName: '📦',
+        quantity: 1,
+        unit: '',
+        status: 0,
+        rating: 0,
+        timesUsed: 0,
+        firstUsedAt: null,
+        lastUsedAt: null,
+        createdAt: now(),
+        updatedAt: now(),
+      }));
+      return { item, accessories };
+    });
     // 添加新分类
     const addedCats = newCategories.filter(c => !store.categories.find(x => x.id === c.id));
     addedCats.forEach(cat => dispatch({ type: 'ADD_CAT', payload: cat }));
-    // 批量添加物品
-    newItems.forEach(item => dispatch({ type: 'ADD_ITEM', payload: item, attrs: [], accessories: [] }));
-    alert(`✅ 导入完成！共导入 ${newItems.length} 条物品${addedCats.length ? `，自动创建 ${addedCats.length} 个新分类` : ''}。`);
+    // 批量添加物品（含附加物）
+    let totalAccCount = 0;
+    newItemsWithAccs.forEach(({ item, accessories }) => {
+      dispatch({ type: 'ADD_ITEM', payload: item, attrs: [], accessories });
+      totalAccCount += accessories.length;
+    });
+    alert(`✅ 导入完成！共导入 ${newItemsWithAccs.length} 条物品${totalAccCount ? `、${totalAccCount} 个附加物` : ''}${addedCats.length ? `，自动创建 ${addedCats.length} 个新分类` : ''}。`);
     setShowImportSheet(false);
     setImportPreview(null);
     setImportFile(null);
@@ -2071,7 +2176,8 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
             <div style={{ fontSize:'13px', color:'#6C6C70', marginBottom:'10px' }}>下载 CSV 模板，在 Excel / Numbers / WPS 中填好数据后保存为 CSV 格式再上传。</div>
             <div style={{ fontSize:'12px', color:'#8E8E93', background:'#F2F2F7', borderRadius:'8px', padding:'10px 12px', marginBottom:'10px', lineHeight:'1.8' }}>
               模板列说明：<br/>
-              <b>名称*</b>（必填）、品牌、分类、价格、购入日期（YYYY-MM-DD）、数量、单位、有效期（YYYY-MM-DD）、备注
+              <b>名称*</b>（必填）、品牌、分类、价格、购入日期（YYYY-MM-DD）、数量、单位、有效期（YYYY-MM-DD）、备注<br/>
+              附加物（可多个）：附加物N名称、附加物N品牌、附加物N价格、附加物N购入日期
             </div>
             <button onClick={downloadImportTemplate} style={{ width:'100%', padding:'12px', borderRadius:'12px', border:'none', background:'#007AFF', color:'#fff', fontSize:'15px', fontWeight:'600', cursor:'pointer' }}>📥 下载 CSV 模板</button>
           </div>
@@ -2101,6 +2207,9 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
 
               <div style={{ background:'#F2F2F7', borderRadius:'10px', padding:'10px 12px', marginBottom:'14px', fontSize:'14px' }}>
                 共识别 <b style={{ color:'#007AFF' }}>{importPreview.rows.length}</b> 条物品记录
+                {importPreview.rows.some(r => r._accessories && r._accessories.length > 0) && (
+                  <span style={{ color:'#8E8E93', marginLeft:'6px' }}>（含 <b style={{ color:'#34C759' }}>{importPreview.rows.reduce((s,r)=>s+(r._accessories||[]).length,0)}</b> 个附加物）</span>
+                )}
               </div>
 
               {/* 预览表格（最多显示5条） */}
@@ -2132,6 +2241,7 @@ function SettingsTab({ store, dispatch }) { // eslint-disable-line
 
               <button onClick={handleConfirmImport} style={{ width:'100%', padding:'14px', borderRadius:'12px', border:'none', background:'#34C759', color:'#fff', fontSize:'16px', fontWeight:'700', cursor:'pointer' }}>
                 ✅ 确认导入 {importPreview.rows.length} 条物品
+                {importPreview.rows.some(r=>r._accessories&&r._accessories.length>0) && ` + ${importPreview.rows.reduce((s,r)=>s+(r._accessories||[]).length,0)} 个附加物`}
               </button>
             </div>
           )}
